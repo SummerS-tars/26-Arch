@@ -13,6 +13,15 @@ module core import common::*;(
 	input  dbus_resp_t dresp,
 	input  logic       trint, swint, exint
 );
+	// Phase 2: ALU operation codes
+	localparam logic [3:0] ALU_ADD  = 4'd0;
+	localparam logic [3:0] ALU_SUB  = 4'd1;
+	localparam logic [3:0] ALU_ADDW = 4'd2;
+	localparam logic [3:0] ALU_SUBW = 4'd3;
+	localparam logic [3:0] ALU_AND  = 4'd4;
+	localparam logic [3:0] ALU_OR   = 4'd5;
+	localparam logic [3:0] ALU_XOR  = 4'd6;
+
 	// ========== 1. Register File ==========
 	logic [63:0] rf [31:1];
 	logic [63:0] wb_data;
@@ -67,6 +76,7 @@ module core import common::*;(
 	logic [6:0]  funct7_id;
 	logic [63:0] imm_id;
 	logic [3:0]  alu_op_id;
+	logic        alu_src_id;
 	logic        mem_read_id, mem_write_id, reg_write_id;
 	logic        wb_sel_id;
 
@@ -81,7 +91,7 @@ module core import common::*;(
 	always_comb begin
 		imm_id = 64'b0;
 		case (opcode_id)
-			7'b0010011, 7'b0000011, 7'b1100111: begin  // I-type
+			7'b0010011, 7'b0000011, 7'b1100111, 7'b0011011: begin  // I-type (incl. ADDIW)
 				imm_id = {{52{instr_id[31]}}, instr_id[31:20]};
 			end
 			7'b0100011: begin  // S-type
@@ -100,12 +110,48 @@ module core import common::*;(
 		endcase
 	end
 
-	// Control signals (Phase 1: placeholder defaults)
-	assign alu_op_id    = 4'b0;
-	assign mem_read_id  = 1'b0;
-	assign mem_write_id = 1'b0;
-	assign reg_write_id = 1'b0;
-	assign wb_sel_id    = 1'b0;
+	// Control signals (Phase 2: real control logic)
+	always_comb begin
+		alu_op_id    = ALU_ADD;
+		alu_src_id   = 1'b0;
+		reg_write_id = 1'b0;
+		mem_read_id  = 1'b0;
+		mem_write_id = 1'b0;
+		wb_sel_id    = 1'b0;
+		case (opcode_id)
+			7'b0010011: begin  // I-type ALU (ADDI, ANDI, ORI, XORI)
+				reg_write_id = 1'b1;
+				alu_src_id   = 1'b1;
+				case (funct3_id)
+					3'b000: alu_op_id = ALU_ADD;
+					3'b100: alu_op_id = ALU_XOR;
+					3'b110: alu_op_id = ALU_OR;
+					3'b111: alu_op_id = ALU_AND;
+					default: ;
+				endcase
+			end
+			7'b0011011: begin  // ADDIW
+				reg_write_id = 1'b1;
+				alu_src_id   = 1'b1;
+				alu_op_id    = ALU_ADDW;
+			end
+			7'b0110011: begin  // R-type (ADD, SUB, AND, OR, XOR)
+				reg_write_id = 1'b1;
+				case (funct3_id)
+					3'b000: alu_op_id = (funct7_id[5]) ? ALU_SUB : ALU_ADD;
+					3'b100: alu_op_id = ALU_XOR;
+					3'b110: alu_op_id = ALU_OR;
+					3'b111: alu_op_id = ALU_AND;
+					default: ;
+				endcase
+			end
+			7'b0111011: begin  // R-type W (ADDW, SUBW)
+				reg_write_id = 1'b1;
+				alu_op_id    = (funct7_id[5]) ? ALU_SUBW : ALU_ADDW;
+			end
+			default: ;
+		endcase
+	end
 
 	// RegFile read - fix: use rs1_id, rs2_id
 	logic [63:0] rs1_data_id_r, rs2_data_id_r;
@@ -121,6 +167,7 @@ module core import common::*;(
 	logic [2:0]  funct3_ex;
 	logic [6:0]  funct7_ex;
 	logic [3:0]  alu_op_ex;
+	logic        alu_src_ex;
 	logic        inst_valid_ex, mem_read_ex, mem_write_ex, reg_write_ex;
 	logic        wb_sel_ex;
 
@@ -138,6 +185,7 @@ module core import common::*;(
 			funct3_ex     <= 3'b0;
 			funct7_ex     <= 7'b0;
 			alu_op_ex     <= 4'b0;
+			alu_src_ex    <= 1'b0;
 			mem_read_ex   <= 1'b0;
 			mem_write_ex  <= 1'b0;
 			reg_write_ex  <= 1'b0;
@@ -155,6 +203,7 @@ module core import common::*;(
 			funct3_ex     <= funct3_id;
 			funct7_ex     <= funct7_id;
 			alu_op_ex     <= alu_op_id;
+			alu_src_ex    <= alu_src_id;
 			mem_read_ex   <= mem_read_id;
 			mem_write_ex  <= mem_write_id;
 			reg_write_ex  <= reg_write_id;
@@ -163,12 +212,31 @@ module core import common::*;(
 	end
 
 	// ========== 6. EX ALU ==========
+	logic [63:0] alu_opA, alu_opB;
 	logic [63:0] alu_result_ex;
+	logic [31:0] alu_res_32;
+
+	assign alu_opA = rs1_data_ex;
+	assign alu_opB = alu_src_ex ? imm_ex : rs2_data_ex;
 
 	always_comb begin
-		alu_result_ex = rs1_data_ex;
+		alu_result_ex = alu_opA;
+		alu_res_32    = 32'b0;
 		case (alu_op_ex)
-			default: alu_result_ex = rs1_data_ex;
+			ALU_ADD:  alu_result_ex = alu_opA + alu_opB;
+			ALU_SUB:  alu_result_ex = alu_opA - alu_opB;
+			ALU_AND:  alu_result_ex = alu_opA & alu_opB;
+			ALU_OR:   alu_result_ex = alu_opA | alu_opB;
+			ALU_XOR:  alu_result_ex = alu_opA ^ alu_opB;
+			ALU_ADDW: begin
+				alu_res_32    = alu_opA[31:0] + alu_opB[31:0];
+				alu_result_ex = {{32{alu_res_32[31]}}, alu_res_32};
+			end
+			ALU_SUBW: begin
+				alu_res_32    = alu_opA[31:0] - alu_opB[31:0];
+				alu_result_ex = {{32{alu_res_32[31]}}, alu_res_32};
+			end
+			default: alu_result_ex = alu_opA;
 		endcase
 	end
 
