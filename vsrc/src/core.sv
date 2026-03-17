@@ -13,16 +13,21 @@ module core import common::*;(
 	input  dbus_resp_t dresp,
 	input  logic       trint, swint, exint
 );
+	localparam logic [31:0] TRAP_INST = 32'h0005006b;
+
 	// ========== 1. Register File ==========
 	logic [63:0] wb_data;
 	logic        reg_write_wb;
 	logic [4:0]  rd_wb;
 	logic [63:0] rs1_data_id_r, rs2_data_id_r;
 	logic [31:0][63:0] rf_dbg;
+	logic [63:0] cycle_cnt, instr_cnt;
+	logic        trap_valid_wb, is_trap_wb;
+	logic [7:0]  trap_code_wb;
 
 	// ========== 2. PC & IF ==========
 	logic [63:0] pc, next_pc;
-	logic        stall;
+	logic        stall, fetch_wait;
 
 	assign next_pc = pc + 64'd4;
 
@@ -33,7 +38,8 @@ module core import common::*;(
 			pc <= next_pc;
 	end
 
-	assign ireq.valid = ~stall;
+	// Keep request stable until data_ok, per Lab1 ibus requirement.
+	assign ireq.valid = ~load_use_hazard;
 	assign ireq.addr  = pc;
 
 	// ========== 3. IF_ID Reg ==========
@@ -107,7 +113,7 @@ module core import common::*;(
 	logic        wb_sel_ex;
 
 	always_ff @(posedge clk) begin
-		if (reset || load_use_hazard) begin
+		if (reset) begin
 			// Bubble: clear all control signals
 			pc_ex         <= 64'b0;
 			instr_ex      <= 32'b0;
@@ -126,7 +132,25 @@ module core import common::*;(
 			mem_write_ex  <= 1'b0;
 			reg_write_ex  <= 1'b0;
 			wb_sel_ex     <= 1'b0;
-		end else begin
+		end else if (load_use_hazard) begin
+			pc_ex         <= 64'b0;
+			instr_ex      <= 32'b0;
+			inst_valid_ex <= 1'b0;
+			rs1_data_ex   <= 64'b0;
+			rs2_data_ex   <= 64'b0;
+			rd_ex         <= 5'b0;
+			rs1_ex        <= 5'b0;
+			rs2_ex        <= 5'b0;
+			imm_ex        <= 64'b0;
+			funct3_ex     <= 3'b0;
+			funct7_ex     <= 7'b0;
+			alu_op_ex     <= ALU_ADD;
+			alu_src_ex    <= 1'b0;
+			mem_read_ex   <= 1'b0;
+			mem_write_ex  <= 1'b0;
+			reg_write_ex  <= 1'b0;
+			wb_sel_ex     <= 1'b0;
+		end else if (!stall) begin
 			pc_ex         <= pc_id;
 			instr_ex      <= instr_id;
 			inst_valid_ex <= inst_valid_id;
@@ -158,7 +182,8 @@ module core import common::*;(
 		.load_use_hazard (load_use_hazard)
 	);
 
-	assign stall = load_use_hazard;
+	assign fetch_wait = ireq.valid && !iresp.data_ok;
+	assign stall = load_use_hazard || fetch_wait;
 
 	// ========== 6. EX ALU (Phase 3: Forwarding) ==========
 	logic [63:0] alu_opA, alu_opB, rs2_forwarded;
@@ -207,7 +232,7 @@ module core import common::*;(
 			mem_write_mem  <= 1'b0;
 			reg_write_mem  <= 1'b0;
 			wb_sel_mem     <= 1'b0;
-		end else begin
+		end else if (!fetch_wait) begin
 			// Phase 3: advance even when stall (let Load flow, avoid deadlock)
 			pc_mem         <= pc_ex;
 			instr_mem      <= instr_ex;
@@ -232,7 +257,7 @@ module core import common::*;(
 	// ========== 9. MEM_WB Reg ==========
 	logic [63:0] pc_wb, alu_result_wb, mem_data_wb;
 	logic [31:0] instr_wb;
-	logic        inst_valid_wb, mem_read_wb;
+	logic        inst_valid_wb, mem_read_wb, commit_valid_wb;
 	logic        wb_sel_wb;
 
 	always_ff @(posedge clk) begin
@@ -246,7 +271,7 @@ module core import common::*;(
 			mem_read_wb   <= 1'b0;
 			reg_write_wb  <= 1'b0;
 			wb_sel_wb     <= 1'b0;
-		end else begin
+		end else if (!fetch_wait) begin
 			// Phase 3: advance even when stall (let Load flow, avoid deadlock)
 			pc_wb         <= pc_mem;
 			instr_wb      <= instr_mem;
@@ -262,6 +287,21 @@ module core import common::*;(
 
 	// ========== 10. WB ==========
 	assign wb_data = wb_sel_wb ? mem_data_wb : alu_result_wb;
+	assign is_trap_wb = inst_valid_wb && (instr_wb == TRAP_INST);
+	assign commit_valid_wb = inst_valid_wb && !fetch_wait;
+	assign trap_valid_wb = is_trap_wb && !fetch_wait;
+	assign trap_code_wb = rf_dbg[10][7:0];
+
+	always_ff @(posedge clk) begin
+		if (reset) begin
+			cycle_cnt <= 64'b0;
+			instr_cnt <= 64'b0;
+		end else begin
+			cycle_cnt <= cycle_cnt + 64'd1;
+			if (commit_valid_wb && !is_trap_wb)
+				instr_cnt <= instr_cnt + 64'd1;
+		end
+	end
 
 	// ========== Difftest: gpr with bypass ==========
 	logic [63:0] gpr_dt [32];
@@ -281,7 +321,7 @@ module core import common::*;(
 		.clock              (clk),
 		.coreid             (8'b0),
 		.index              (8'b0),
-		.valid              (inst_valid_wb),
+		.valid              (commit_valid_wb),
 		.pc                 (pc_wb),
 		.instr              (instr_wb),
 		.skip               (1'b0),
@@ -332,11 +372,11 @@ module core import common::*;(
     DifftestTrapEvent DifftestTrapEvent(
 		.clock              (clk),
 		.coreid             (0),
-		.valid              (0),
-		.code               (0),
-		.pc                 (0),
-		.cycleCnt           (0),
-		.instrCnt           (0)
+		.valid              (trap_valid_wb),
+		.code               (trap_code_wb[2:0]),
+		.pc                 (pc_wb),
+		.cycleCnt           (cycle_cnt),
+		.instrCnt           (instr_cnt)
 	);
 
 	DifftestCSRState DifftestCSRState(
