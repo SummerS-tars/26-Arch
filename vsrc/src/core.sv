@@ -217,6 +217,7 @@ module core import common::*;(
 	logic [63:0] pc_mem, alu_result_mem, rs2_data_mem;
 	logic [31:0] instr_mem;
 	logic [4:0]  rd_mem;
+	logic [2:0]  funct3_mem;
 	logic        inst_valid_mem, mem_read_mem, mem_write_mem, reg_write_mem;
 	logic        wb_sel_mem;
 
@@ -228,6 +229,7 @@ module core import common::*;(
 			alu_result_mem <= 64'b0;
 			rs2_data_mem   <= 64'b0;
 			rd_mem         <= 5'b0;
+			funct3_mem     <= 3'b0;
 			mem_read_mem   <= 1'b0;
 			mem_write_mem  <= 1'b0;
 			reg_write_mem  <= 1'b0;
@@ -240,6 +242,7 @@ module core import common::*;(
 			alu_result_mem <= alu_result_ex;
 			rs2_data_mem   <= rs2_data_ex;
 			rd_mem         <= rd_ex;
+			funct3_mem     <= funct3_ex;
 			mem_read_mem   <= mem_read_ex;
 			mem_write_mem  <= mem_write_ex;
 			reg_write_mem  <= reg_write_ex;
@@ -257,6 +260,7 @@ module core import common::*;(
 	// ========== 9. MEM_WB Reg ==========
 	logic [63:0] pc_wb, alu_result_wb, mem_data_wb;
 	logic [31:0] instr_wb;
+	logic [2:0]  funct3_wb;
 	logic        inst_valid_wb, mem_read_wb, commit_valid_wb;
 	logic        wb_sel_wb;
 
@@ -268,6 +272,7 @@ module core import common::*;(
 			alu_result_wb <= 64'b0;
 			mem_data_wb   <= 64'b0;
 			rd_wb         <= 5'b0;
+			funct3_wb     <= 3'b0;
 			mem_read_wb   <= 1'b0;
 			reg_write_wb  <= 1'b0;
 			wb_sel_wb     <= 1'b0;
@@ -279,6 +284,7 @@ module core import common::*;(
 			alu_result_wb <= alu_result_mem;
 			mem_data_wb   <= dresp.data;
 			rd_wb         <= rd_mem;
+			funct3_wb     <= funct3_mem;
 			mem_read_wb   <= mem_read_mem;
 			reg_write_wb  <= reg_write_mem;
 			wb_sel_wb     <= wb_sel_mem;

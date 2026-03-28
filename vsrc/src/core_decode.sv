@@ -56,6 +56,18 @@ module core_decode import common::*;(
                 decode_out.alu_src   = 1'b1;
                 decode_out.alu_op    = ALU_ADDW;
             end
+            7'b0000011: begin
+                decode_out.reg_write = 1'b1;
+                decode_out.alu_src   = 1'b1;
+                decode_out.mem_read  = 1'b1;
+                decode_out.wb_sel    = 1'b1;
+                decode_out.alu_op    = ALU_ADD;
+            end
+            7'b0100011: begin
+                decode_out.alu_src   = 1'b1;
+                decode_out.mem_write = 1'b1;
+                decode_out.alu_op    = ALU_ADD;
+            end
             7'b0110011: begin
                 decode_out.reg_write = 1'b1;
                 case (decode_out.funct3)
@@ -69,6 +81,12 @@ module core_decode import common::*;(
             7'b0111011: begin
                 decode_out.reg_write = 1'b1;
                 decode_out.alu_op    = decode_out.funct7[5] ? ALU_SUBW : ALU_ADDW;
+            end
+            7'b0110111: begin
+                decode_out.reg_write = 1'b1;
+                decode_out.rs1       = 5'b0;
+                decode_out.alu_src   = 1'b1;
+                decode_out.alu_op    = ALU_ADD;
             end
             default: ;
         endcase
