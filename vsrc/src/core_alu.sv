@@ -19,12 +19,29 @@ module core_alu import common::*;(
             ALU_AND:  result = op_a & op_b;
             ALU_OR:   result = op_a | op_b;
             ALU_XOR:  result = op_a ^ op_b;
+            ALU_SLL:  result = op_a << op_b[5:0];
+            ALU_SRL:  result = op_a >> op_b[5:0];
+            ALU_SRA:  result = $signed(op_a) >>> op_b[5:0];
+            ALU_SLT:  result = {{63{1'b0}}, ($signed(op_a) < $signed(op_b))};
+            ALU_SLTU: result = {{63{1'b0}}, (op_a < op_b)};
             ALU_ADDW: begin
                 result_32 = op_a[31:0] + op_b[31:0];
                 result    = {{32{result_32[31]}}, result_32};
             end
             ALU_SUBW: begin
                 result_32 = op_a[31:0] - op_b[31:0];
+                result    = {{32{result_32[31]}}, result_32};
+            end
+            ALU_SLLW: begin
+                result_32 = op_a[31:0] << op_b[4:0];
+                result    = {{32{result_32[31]}}, result_32};
+            end
+            ALU_SRLW: begin
+                result_32 = op_a[31:0] >> op_b[4:0];
+                result    = {{32{result_32[31]}}, result_32};
+            end
+            ALU_SRAW: begin
+                result_32 = $signed(op_a[31:0]) >>> op_b[4:0];
                 result    = {{32{result_32[31]}}, result_32};
             end
             default: ;

@@ -83,13 +83,15 @@ module core import common::*;(
 	// ========== 2. PC & IF ==========
 	logic [63:0] pc, next_pc;
 	logic        stall, fetch_wait, mem_wait, mem_access_mem;
+	logic        redirect_valid_ex, redirect_fire_ex;
+	logic [63:0] redirect_target_ex;
 
-	assign next_pc = pc + 64'd4;
+	assign next_pc = redirect_fire_ex ? redirect_target_ex : (pc + 64'd4);
 
 	always_ff @(posedge clk) begin
 		if (reset)
 			pc <= PCINIT;
-		else if (!stall)
+		else if (redirect_fire_ex || !stall)
 			pc <= next_pc;
 	end
 
@@ -103,7 +105,7 @@ module core import common::*;(
 	logic        inst_valid_id;
 
 	always_ff @(posedge clk) begin
-		if (reset) begin
+		if (reset || redirect_fire_ex) begin
 			pc_id        <= 64'b0;
 			instr_id     <= 32'b0;
 			inst_valid_id <= 1'b0;
@@ -121,9 +123,9 @@ module core import common::*;(
 	logic [6:0]  funct7_id;
 	logic [63:0] imm_id;
 	alu_op_t     alu_op_id;
-	logic        alu_src_id;
+	logic        alu_src_id, use_pc_id, is_branch_id, is_jump_id, is_jalr_id;
 	logic        mem_read_id, mem_write_id, reg_write_id;
-	logic        wb_sel_id;
+	wb_sel_t     wb_sel_id;
 
 	core_decode decode(
 		.instr      (instr_id),
@@ -138,9 +140,13 @@ module core import common::*;(
 	assign imm_id      = decode_id.imm;
 	assign alu_op_id   = decode_id.alu_op;
 	assign alu_src_id  = decode_id.alu_src;
+	assign use_pc_id   = decode_id.use_pc;
 	assign mem_read_id = decode_id.mem_read;
 	assign mem_write_id = decode_id.mem_write;
 	assign reg_write_id = decode_id.reg_write;
+	assign is_branch_id = decode_id.is_branch;
+	assign is_jump_id   = decode_id.is_jump;
+	assign is_jalr_id   = decode_id.is_jalr;
 	assign wb_sel_id    = decode_id.wb_sel;
 
 	core_regfile regfile(
@@ -163,12 +169,12 @@ module core import common::*;(
 	logic [2:0]  funct3_ex;
 	logic [6:0]  funct7_ex;
 	alu_op_t     alu_op_ex;
-	logic        alu_src_ex;
+	logic        alu_src_ex, use_pc_ex, is_branch_ex, is_jump_ex, is_jalr_ex;
 	logic        inst_valid_ex, mem_read_ex, mem_write_ex, reg_write_ex;
-	logic        wb_sel_ex;
+	wb_sel_t     wb_sel_ex;
 
 	always_ff @(posedge clk) begin
-		if (reset) begin
+		if (reset || redirect_fire_ex) begin
 			// Bubble: clear all control signals
 			pc_ex         <= 64'b0;
 			instr_ex      <= 32'b0;
@@ -183,11 +189,15 @@ module core import common::*;(
 			funct7_ex     <= 7'b0;
 			alu_op_ex     <= ALU_ADD;
 			alu_src_ex    <= 1'b0;
+			use_pc_ex     <= 1'b0;
 			mem_read_ex   <= 1'b0;
 			mem_write_ex  <= 1'b0;
 			reg_write_ex  <= 1'b0;
-			wb_sel_ex     <= 1'b0;
-		end else if (load_use_hazard || (mem_access_mem && !mem_wait)) begin
+			is_branch_ex  <= 1'b0;
+			is_jump_ex    <= 1'b0;
+			is_jalr_ex    <= 1'b0;
+			wb_sel_ex     <= WB_ALU;
+		end else if ((load_use_hazard && !mem_wait && !fetch_wait) || (mem_access_mem && !mem_wait && !fetch_wait)) begin
 			pc_ex         <= 64'b0;
 			instr_ex      <= 32'b0;
 			inst_valid_ex <= 1'b0;
@@ -201,10 +211,14 @@ module core import common::*;(
 			funct7_ex     <= 7'b0;
 			alu_op_ex     <= ALU_ADD;
 			alu_src_ex    <= 1'b0;
+			use_pc_ex     <= 1'b0;
 			mem_read_ex   <= 1'b0;
 			mem_write_ex  <= 1'b0;
 			reg_write_ex  <= 1'b0;
-			wb_sel_ex     <= 1'b0;
+			is_branch_ex  <= 1'b0;
+			is_jump_ex    <= 1'b0;
+			is_jalr_ex    <= 1'b0;
+			wb_sel_ex     <= WB_ALU;
 		end else if (!stall) begin
 			pc_ex         <= pc_id;
 			instr_ex      <= instr_id;
@@ -219,9 +233,13 @@ module core import common::*;(
 			funct7_ex     <= funct7_id;
 			alu_op_ex     <= alu_op_id;
 			alu_src_ex    <= alu_src_id;
+			use_pc_ex     <= use_pc_id;
 			mem_read_ex   <= mem_read_id;
 			mem_write_ex  <= mem_write_id;
 			reg_write_ex  <= reg_write_id;
+			is_branch_ex  <= is_branch_id;
+			is_jump_ex    <= is_jump_id;
+			is_jalr_ex    <= is_jalr_id;
 			wb_sel_ex     <= wb_sel_id;
 		end
 	end
@@ -241,8 +259,10 @@ module core import common::*;(
 	assign stall = load_use_hazard || fetch_wait || mem_access_mem;
 
 	// ========== 6. EX ALU (Phase 3: Forwarding) ==========
-	logic [63:0] alu_opA, alu_opB, rs2_forwarded;
+	logic [63:0] rs1_forwarded_ex, rs2_forwarded_ex, alu_in_a_ex, alu_in_b_ex;
+	logic [63:0] forward_data_mem;
 	logic [63:0] alu_result_ex;
+	logic        branch_taken_ex;
 
 	core_forwarding_unit forwarding_unit(
 		.rs1_ex         (rs1_ex),
@@ -251,22 +271,40 @@ module core import common::*;(
 		.rs2_data_ex    (rs2_data_ex),
 		.reg_write_mem  (reg_write_mem),
 		.rd_mem         (rd_mem),
-		.alu_result_mem (alu_result_mem),
+		.forward_data_mem (forward_data_mem),
 		.reg_write_wb   (reg_write_wb),
 		.rd_wb          (rd_wb),
 		.wb_data        (wb_data),
-		.op_a_forwarded (alu_opA),
-		.rs2_forwarded  (rs2_forwarded)
+		.op_a_forwarded (rs1_forwarded_ex),
+		.rs2_forwarded  (rs2_forwarded_ex)
 	);
 
-	assign alu_opB = alu_src_ex ? imm_ex : rs2_forwarded;
+	assign alu_in_a_ex = use_pc_ex ? pc_ex : rs1_forwarded_ex;
+	assign alu_in_b_ex = alu_src_ex ? imm_ex : rs2_forwarded_ex;
 
 	core_alu alu(
 		.alu_op (alu_op_ex),
-		.op_a   (alu_opA),
-		.op_b   (alu_opB),
+		.op_a   (alu_in_a_ex),
+		.op_b   (alu_in_b_ex),
 		.result (alu_result_ex)
 	);
+
+	always_comb begin
+		branch_taken_ex = 1'b0;
+		case (funct3_ex)
+			3'b000:  branch_taken_ex = (rs1_forwarded_ex == rs2_forwarded_ex);
+			3'b001:  branch_taken_ex = (rs1_forwarded_ex != rs2_forwarded_ex);
+			3'b100:  branch_taken_ex = ($signed(rs1_forwarded_ex) < $signed(rs2_forwarded_ex));
+			3'b101:  branch_taken_ex = ($signed(rs1_forwarded_ex) >= $signed(rs2_forwarded_ex));
+			3'b110:  branch_taken_ex = (rs1_forwarded_ex < rs2_forwarded_ex);
+			3'b111:  branch_taken_ex = (rs1_forwarded_ex >= rs2_forwarded_ex);
+			default: ;
+		endcase
+	end
+
+	assign redirect_valid_ex = inst_valid_ex && (is_jump_ex || (is_branch_ex && branch_taken_ex));
+	assign redirect_target_ex = is_jalr_ex ? ((rs1_forwarded_ex + imm_ex) & ~64'd1) : (pc_ex + imm_ex);
+	assign redirect_fire_ex = redirect_valid_ex && !fetch_wait && !mem_wait;
 
 	// ========== 7. EX_MEM Reg ==========
 	logic [63:0] pc_mem, alu_result_mem, rs2_data_mem;
@@ -274,7 +312,7 @@ module core import common::*;(
 	logic [4:0]  rd_mem;
 	logic [2:0]  funct3_mem;
 	logic        inst_valid_mem, mem_read_mem, mem_write_mem, reg_write_mem;
-	logic        wb_sel_mem;
+	wb_sel_t     wb_sel_mem;
 
 	always_ff @(posedge clk) begin
 		if (reset) begin
@@ -288,14 +326,14 @@ module core import common::*;(
 			mem_read_mem   <= 1'b0;
 			mem_write_mem  <= 1'b0;
 			reg_write_mem  <= 1'b0;
-			wb_sel_mem     <= 1'b0;
+			wb_sel_mem     <= WB_ALU;
 		end else if (!fetch_wait && !mem_wait) begin
 			// Allow load-use bubbles to flow, but hold MEM while dbus is still busy.
 			pc_mem         <= pc_ex;
 			instr_mem      <= instr_ex;
 			inst_valid_mem <= inst_valid_ex;
 			alu_result_mem <= alu_result_ex;
-			rs2_data_mem   <= rs2_forwarded;
+			rs2_data_mem   <= rs2_forwarded_ex;
 			rd_mem         <= rd_ex;
 			funct3_mem     <= funct3_ex;
 			mem_read_mem   <= mem_read_ex;
@@ -304,6 +342,8 @@ module core import common::*;(
 			wb_sel_mem     <= wb_sel_ex;
 		end
 	end
+
+	assign forward_data_mem = (wb_sel_mem == WB_PC4) ? (pc_mem + 64'd4) : alu_result_mem;
 
 	// ========== 8. MEM ==========
 	logic [63:0] load_data_mem, store_data_aligned_mem;
@@ -327,8 +367,8 @@ module core import common::*;(
 	logic [63:0] pc_wb, alu_result_wb, mem_data_wb;
 	logic [31:0] instr_wb;
 	logic [2:0]  funct3_wb;
-	logic        inst_valid_wb, mem_read_wb, commit_valid_wb;
-	logic        wb_sel_wb;
+	logic        inst_valid_wb, mem_read_wb, mem_write_wb, commit_valid_wb, difftest_skip_wb;
+	wb_sel_t     wb_sel_wb;
 
 	always_ff @(posedge clk) begin
 		if (reset) begin
@@ -340,8 +380,9 @@ module core import common::*;(
 			rd_wb         <= 5'b0;
 			funct3_wb     <= 3'b0;
 			mem_read_wb   <= 1'b0;
+			mem_write_wb  <= 1'b0;
 			reg_write_wb  <= 1'b0;
-			wb_sel_wb     <= 1'b0;
+			wb_sel_wb     <= WB_ALU;
 		end else if (!fetch_wait && !mem_wait) begin
 			// Allow load-use bubbles to flow, but do not sample dbus before data_ok.
 			pc_wb         <= pc_mem;
@@ -352,18 +393,26 @@ module core import common::*;(
 			rd_wb         <= rd_mem;
 			funct3_wb     <= funct3_mem;
 			mem_read_wb   <= mem_read_mem;
+			mem_write_wb  <= mem_write_mem;
 			reg_write_wb  <= reg_write_mem;
 			wb_sel_wb     <= wb_sel_mem;
 		end
 	end
 
 	// ========== 10. WB ==========
-	assign wb_data = wb_sel_wb ? mem_data_wb : alu_result_wb;
+	always_comb begin
+		case (wb_sel_wb)
+			WB_MEM: wb_data = mem_data_wb;
+			WB_PC4: wb_data = pc_wb + 64'd4;
+			default: wb_data = alu_result_wb;
+		endcase
+	end
 	assign is_trap_wb = inst_valid_wb && (instr_wb == TRAP_INST);
 	assign commit_valid_wb = inst_valid_wb && !wb_fired;
-	assign reg_write_wb_fire = reg_write_wb && commit_valid_wb;
+	assign reg_write_wb_fire = reg_write_wb && commit_valid_wb && (rd_wb != 5'b0);
 	assign trap_valid_wb = is_trap_wb && commit_valid_wb;
 	assign trap_code_wb = rf_dbg[10][7:0];
+	assign difftest_skip_wb = (mem_read_wb || mem_write_wb) && (alu_result_wb[31] == 1'b0);
 
 	always_ff @(posedge clk) begin
 		if (reset) begin
@@ -407,7 +456,7 @@ module core import common::*;(
 		.valid              (commit_valid_wb),
 		.pc                 (pc_wb),
 		.instr              (instr_wb),
-		.skip               (1'b0),
+		.skip               (difftest_skip_wb),
 		.isRVC              (1'b0),
 		.scFailed           (1'b0),
 		.wen                (reg_write_wb_fire),

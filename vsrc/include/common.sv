@@ -214,8 +214,22 @@ typedef enum logic [3:0] {
     ALU_SUBW = 4'd3,
     ALU_AND  = 4'd4,
     ALU_OR   = 4'd5,
-    ALU_XOR  = 4'd6
+    ALU_XOR  = 4'd6,
+    ALU_SLL  = 4'd7,
+    ALU_SRL  = 4'd8,
+    ALU_SRA  = 4'd9,
+    ALU_SLT  = 4'd10,
+    ALU_SLTU = 4'd11,
+    ALU_SLLW = 4'd12,
+    ALU_SRLW = 4'd13,
+    ALU_SRAW = 4'd14
 } alu_op_t;
+
+typedef enum logic [1:0] {
+    WB_ALU = 2'd0,
+    WB_MEM = 2'd1,
+    WB_PC4 = 2'd2
+} wb_sel_t;
 
 typedef struct packed {
     u5       rd;
@@ -226,10 +240,14 @@ typedef struct packed {
     u64      imm;
     alu_op_t alu_op;
     logic    alu_src;
+    logic    use_pc;
     logic    mem_read;
     logic    mem_write;
     logic    reg_write;
-    logic    wb_sel;
+    logic    is_branch;
+    logic    is_jump;
+    logic    is_jalr;
+    wb_sel_t wb_sel;
 } decode_out_t;
 
 `define IREQ_TO_DREQ(ireq) \
