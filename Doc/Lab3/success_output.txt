@@ -1,0 +1,14 @@
+AES benchmark + correctness
+Running AES correctness checks...
+[TEST] AES-128 test vector Encrypt
+[PASS] AES-128 test vector Encrypt passed
+[TEST] AES-128 test vector Decrypt
+[PASS] AES-128 test vector Decrypt passed
+[PASS] AES correctness checks passed
+[RNG] heavy_rng_mod result=0, time(us)=227606
+[RNG] heavy_rng_mod it/s=4405
+Core 0: HIT GOOD TRAP at pc = 0x80000030
+total guest instructions = 1,243,690
+instrCnt = 1,243,690, cycleCnt = 6,596,649, IPC = 0.188534
+Seed=0 Guest cycle spent: 6,596,651 (this will be different from cycleCnt if emu loads a snapshot)
+Host time spent: 2,894ms
