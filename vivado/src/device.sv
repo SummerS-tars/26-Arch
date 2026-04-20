@@ -43,7 +43,7 @@ module device #(
 	end
 
 	always_comb begin
-		rdata = 'x;
+		rdata = '0;
 		unique case(addr)
 			SW_ADDR: begin
 				unique case(switch)
@@ -101,23 +101,17 @@ module device #(
 		else if (valid && addr == FINISH_ADDR && wvalid) finish <= '1;
 	end
 
-    logic [13:0] bitTmr = '0;
+    logic [13:0] bitTmr;
 
     localparam type state_t = enum logic [1:0] {
         RDY, LOAD_BIT, SEND_BIT
     };
 
     logic bitDone;
-    int bitIndex;
-    logic txBit = '1;
+    logic [3:0] bitIndex;
+    logic txBit;
     logic [9:0] txData;
-    state_t txState = RDY;
-
-    // initial begin
-    //     txState = RDY;
-    //     txBit = '1;
-    //     bitTmr = '0;
-    // end
+    state_t txState;
 
     logic send;
     logic [7:0] char_data;
@@ -128,7 +122,7 @@ module device #(
         8'h77,8'h6f,8'h72,8'h6c,8'h64,8'h21,8'ha,8'h0
     };
 
-    int idx = 14;
+    logic [4:0] idx;
 	logic putchar;
 	always_ff @(posedge clk) begin
 		if (reset) putchar <= '1;
@@ -140,34 +134,40 @@ module device #(
     assign send = (idx != 0 && finish) || (addr == TX_DATA && valid && wvalid);
 
     always_ff @(posedge clk) begin
-        if (send && finish) begin
+        if (reset) begin
+            idx <= 5'd14;
+        end else if (send && finish) begin
             if (tx_ready) idx <= idx - 1;
         end
     end
 
     assign char_data = finish ? str[idx] : wdata[39:32];
     always_ff @(posedge clk) begin
-        unique case(txState)
-            RDY: begin
-                if (send && putchar) txState <= LOAD_BIT;
-            end
-            LOAD_BIT: begin
-                txState <= SEND_BIT;
-            end
-            SEND_BIT: begin
-                if (bitDone) begin
-                    if (bitIndex == BIT_INDEX_MAX) txState <= RDY;
-                    else txState <= LOAD_BIT;
+        if (reset) begin
+            txState <= RDY;
+        end else begin
+            unique case(txState)
+                RDY: begin
+                    if (send && putchar) txState <= LOAD_BIT;
                 end
-            end
-            default: begin
-                txState <= RDY;
-            end
-        endcase
+                LOAD_BIT: begin
+                    txState <= SEND_BIT;
+                end
+                SEND_BIT: begin
+                    if (bitDone) begin
+                        if (bitIndex == BIT_INDEX_MAX) txState <= RDY;
+                        else txState <= LOAD_BIT;
+                    end
+                end
+                default: begin
+                    txState <= RDY;
+                end
+            endcase
+        end
     end
 
     always_ff @(posedge clk) begin
-        if (txState == RDY) bitTmr <= '0;
+        if (reset || txState == RDY) bitTmr <= '0;
         else if (bitDone) bitTmr <= '0;
         else bitTmr <= bitTmr + 1;
     end
@@ -175,16 +175,17 @@ module device #(
     assign bitDone = bitTmr == BIT_TMR_MAX;
 
     always_ff @(posedge clk) begin
-        if (txState == RDY) bitIndex <= '0;
+        if (reset || txState == RDY) bitIndex <= '0;
         else if (txState == LOAD_BIT) bitIndex <= bitIndex + 1;
     end
 
     always_ff @(posedge clk) begin
-        if (send) txData <= {1'b1, char_data, 1'b0};
+        if (reset) txData <= '0;
+        else if (send) txData <= {1'b1, char_data, 1'b0};
     end
 
     always_ff @(posedge clk) begin
-        if (txState == RDY) begin
+        if (reset || txState == RDY) begin
             txBit <= '1;
         end else if (txState == LOAD_BIT) begin
             txBit <= txData[bitIndex];
@@ -196,8 +197,9 @@ module device #(
 	if (SIMULATION)
 		assign ready = '1;
 	else
-    	assign ready = tx_ready;
+    	assign ready = (valid && addr == TX_DATA) ? tx_ready : '1;
 		
+`ifndef SYNTHESIS
 	always_ff @(posedge clk) begin
 		if (~reset && valid && wvalid) begin
 			if (addr == TX_DATA) begin
@@ -207,6 +209,7 @@ module device #(
 			end
 		end
 	end
+`endif
 	
 	
 endmodule

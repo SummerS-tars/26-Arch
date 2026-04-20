@@ -26,7 +26,10 @@ module mycpu_top
       .clk,
       .reset,
       .oreq,
-      .oresp
+      .oresp,
+      .trint(1'b0),
+      .swint(1'b0),
+      .exint(1'b0)
   );
 
   assign valid = oreq.valid;
