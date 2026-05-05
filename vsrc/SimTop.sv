@@ -5,6 +5,7 @@
 `include "src/core_alu.sv"
 `include "src/core_hazard_unit.sv"
 `include "src/core_forwarding_unit.sv"
+`include "src/core_csr.sv"
 `include "src/core.sv"
 `include "util/IBusToCBus.sv"
 `include "util/DBusToCBus.sv"

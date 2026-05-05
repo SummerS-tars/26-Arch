@@ -228,8 +228,15 @@ typedef enum logic [3:0] {
 typedef enum logic [1:0] {
     WB_ALU = 2'd0,
     WB_MEM = 2'd1,
-    WB_PC4 = 2'd2
+    WB_PC4 = 2'd2,
+    WB_CSR = 2'd3
 } wb_sel_t;
+
+typedef enum logic [1:0] {
+    CSR_OP_WRITE = 2'd0,
+    CSR_OP_SET   = 2'd1,
+    CSR_OP_CLEAR = 2'd2
+} csr_op_t;
 
 typedef struct packed {
     u5       rd;
@@ -247,6 +254,11 @@ typedef struct packed {
     logic    is_branch;
     logic    is_jump;
     logic    is_jalr;
+    logic    is_csr;
+    csr_op_t csr_op;
+    csr_addr_t csr_addr;
+    logic    csr_uses_imm;
+    u64      csr_zimm;
     wb_sel_t wb_sel;
 } decode_out_t;
 

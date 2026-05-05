@@ -124,6 +124,10 @@ module core import common::*;(
 	logic [63:0] imm_id;
 	alu_op_t     alu_op_id;
 	logic        alu_src_id, use_pc_id, is_branch_id, is_jump_id, is_jalr_id;
+	logic        is_csr_id, csr_uses_imm_id;
+	csr_op_t     csr_op_id;
+	csr_addr_t   csr_addr_id;
+	logic [63:0] csr_zimm_id;
 	logic        mem_read_id, mem_write_id, reg_write_id;
 	wb_sel_t     wb_sel_id;
 
@@ -147,6 +151,11 @@ module core import common::*;(
 	assign is_branch_id = decode_id.is_branch;
 	assign is_jump_id   = decode_id.is_jump;
 	assign is_jalr_id   = decode_id.is_jalr;
+	assign is_csr_id    = decode_id.is_csr;
+	assign csr_op_id    = decode_id.csr_op;
+	assign csr_addr_id  = decode_id.csr_addr;
+	assign csr_uses_imm_id = decode_id.csr_uses_imm;
+	assign csr_zimm_id  = decode_id.csr_zimm;
 	assign wb_sel_id    = decode_id.wb_sel;
 
 	core_regfile regfile(
@@ -164,12 +173,16 @@ module core import common::*;(
 
 	// ========== 5. ID_EX Reg ==========
 	logic [63:0] pc_ex, rs1_data_ex, rs2_data_ex, imm_ex;
+	logic [63:0] csr_zimm_ex;
 	logic [31:0] instr_ex;
 	logic [4:0]  rd_ex, rs1_ex, rs2_ex;
 	logic [2:0]  funct3_ex;
 	logic [6:0]  funct7_ex;
 	alu_op_t     alu_op_ex;
 	logic        alu_src_ex, use_pc_ex, is_branch_ex, is_jump_ex, is_jalr_ex;
+	logic        is_csr_ex, csr_uses_imm_ex;
+	csr_op_t     csr_op_ex;
+	csr_addr_t   csr_addr_ex;
 	logic        inst_valid_ex, mem_read_ex, mem_write_ex, reg_write_ex;
 	wb_sel_t     wb_sel_ex;
 
@@ -185,6 +198,7 @@ module core import common::*;(
 			rs1_ex        <= 5'b0;
 			rs2_ex        <= 5'b0;
 			imm_ex        <= 64'b0;
+			csr_zimm_ex   <= 64'b0;
 			funct3_ex     <= 3'b0;
 			funct7_ex     <= 7'b0;
 			alu_op_ex     <= ALU_ADD;
@@ -196,6 +210,10 @@ module core import common::*;(
 			is_branch_ex  <= 1'b0;
 			is_jump_ex    <= 1'b0;
 			is_jalr_ex    <= 1'b0;
+			is_csr_ex     <= 1'b0;
+			csr_op_ex     <= CSR_OP_WRITE;
+			csr_addr_ex   <= 12'b0;
+			csr_uses_imm_ex <= 1'b0;
 			wb_sel_ex     <= WB_ALU;
 		end else if ((load_use_hazard && !mem_wait && !fetch_wait) || (mem_access_mem && !mem_wait && !fetch_wait)) begin
 			pc_ex         <= 64'b0;
@@ -207,6 +225,7 @@ module core import common::*;(
 			rs1_ex        <= 5'b0;
 			rs2_ex        <= 5'b0;
 			imm_ex        <= 64'b0;
+			csr_zimm_ex   <= 64'b0;
 			funct3_ex     <= 3'b0;
 			funct7_ex     <= 7'b0;
 			alu_op_ex     <= ALU_ADD;
@@ -218,6 +237,10 @@ module core import common::*;(
 			is_branch_ex  <= 1'b0;
 			is_jump_ex    <= 1'b0;
 			is_jalr_ex    <= 1'b0;
+			is_csr_ex     <= 1'b0;
+			csr_op_ex     <= CSR_OP_WRITE;
+			csr_addr_ex   <= 12'b0;
+			csr_uses_imm_ex <= 1'b0;
 			wb_sel_ex     <= WB_ALU;
 		end else if (!stall) begin
 			pc_ex         <= pc_id;
@@ -229,6 +252,7 @@ module core import common::*;(
 			rs1_ex        <= rs1_id;
 			rs2_ex        <= rs2_id;
 			imm_ex        <= imm_id;
+			csr_zimm_ex   <= csr_zimm_id;
 			funct3_ex     <= funct3_id;
 			funct7_ex     <= funct7_id;
 			alu_op_ex     <= alu_op_id;
@@ -240,6 +264,10 @@ module core import common::*;(
 			is_branch_ex  <= is_branch_id;
 			is_jump_ex    <= is_jump_id;
 			is_jalr_ex    <= is_jalr_id;
+			is_csr_ex     <= is_csr_id;
+			csr_op_ex     <= csr_op_id;
+			csr_addr_ex   <= csr_addr_id;
+			csr_uses_imm_ex <= csr_uses_imm_id;
 			wb_sel_ex     <= wb_sel_id;
 		end
 	end
@@ -263,6 +291,43 @@ module core import common::*;(
 	logic [63:0] forward_data_mem;
 	logic [63:0] alu_result_ex;
 	logic        branch_taken_ex;
+	logic [63:0] csr_read_data_ex, csr_write_data_ex;
+	logic        csr_write_enable_ex, csr_write_wb_fire;
+	logic [63:0] csr_mstatus, csr_sstatus, csr_mepc, csr_sepc;
+	logic [63:0] csr_mtval, csr_stval, csr_mtvec, csr_stvec;
+	logic [63:0] csr_mcause, csr_scause, csr_satp, csr_mip, csr_mie;
+	logic [63:0] csr_mscratch, csr_sscratch, csr_mideleg, csr_medeleg;
+	logic [63:0] csr_mcycle, csr_mhartid;
+
+	core_csr csr_file(
+		.clk       (clk),
+		.reset     (reset),
+		.raddr     (csr_addr_ex),
+		.rdata     (csr_read_data_ex),
+		.wen       (csr_write_wb_fire),
+		.wop       (csr_op_wb),
+		.waddr     (csr_addr_wb),
+		.wdata     (csr_write_data_wb),
+		.mstatus   (csr_mstatus),
+		.sstatus   (csr_sstatus),
+		.mepc      (csr_mepc),
+		.sepc      (csr_sepc),
+		.mtval     (csr_mtval),
+		.stval     (csr_stval),
+		.mtvec     (csr_mtvec),
+		.stvec     (csr_stvec),
+		.mcause    (csr_mcause),
+		.scause    (csr_scause),
+		.satp      (csr_satp),
+		.mip       (csr_mip),
+		.mie       (csr_mie),
+		.mscratch  (csr_mscratch),
+		.sscratch  (csr_sscratch),
+		.mideleg   (csr_mideleg),
+		.medeleg   (csr_medeleg),
+		.mcycle    (csr_mcycle),
+		.mhartid   (csr_mhartid)
+	);
 
 	core_forwarding_unit forwarding_unit(
 		.rs1_ex         (rs1_ex),
@@ -281,6 +346,10 @@ module core import common::*;(
 
 	assign alu_in_a_ex = use_pc_ex ? pc_ex : rs1_forwarded_ex;
 	assign alu_in_b_ex = alu_src_ex ? imm_ex : rs2_forwarded_ex;
+	assign csr_write_data_ex = csr_uses_imm_ex ? csr_zimm_ex : rs1_forwarded_ex;
+	assign csr_write_enable_ex = is_csr_ex &&
+		((csr_op_ex == CSR_OP_WRITE) ||
+		 (csr_uses_imm_ex ? (csr_zimm_ex[4:0] != 5'b0) : (rs1_ex != 5'b0)));
 
 	core_alu alu(
 		.alu_op (alu_op_ex),
@@ -302,16 +371,21 @@ module core import common::*;(
 		endcase
 	end
 
-	assign redirect_valid_ex = inst_valid_ex && (is_jump_ex || (is_branch_ex && branch_taken_ex));
-	assign redirect_target_ex = is_jalr_ex ? ((rs1_forwarded_ex + imm_ex) & ~64'd1) : (pc_ex + imm_ex);
+	assign redirect_valid_ex = inst_valid_ex && (is_csr_ex || is_jump_ex || (is_branch_ex && branch_taken_ex));
+	assign redirect_target_ex = is_csr_ex ? (pc_ex + 64'd4) :
+		(is_jalr_ex ? ((rs1_forwarded_ex + imm_ex) & ~64'd1) : (pc_ex + imm_ex));
 	assign redirect_fire_ex = redirect_valid_ex && !fetch_wait && !mem_wait;
 
 	// ========== 7. EX_MEM Reg ==========
 	logic [63:0] pc_mem, alu_result_mem, rs2_data_mem;
+	logic [63:0] csr_read_data_mem, csr_write_data_mem;
 	logic [31:0] instr_mem;
 	logic [4:0]  rd_mem;
 	logic [2:0]  funct3_mem;
 	logic        inst_valid_mem, mem_read_mem, mem_write_mem, reg_write_mem;
+	logic        is_csr_mem, csr_write_enable_mem;
+	csr_op_t     csr_op_mem;
+	csr_addr_t   csr_addr_mem;
 	wb_sel_t     wb_sel_mem;
 
 	always_ff @(posedge clk) begin
@@ -321,11 +395,17 @@ module core import common::*;(
 			inst_valid_mem <= 1'b0;
 			alu_result_mem <= 64'b0;
 			rs2_data_mem   <= 64'b0;
+			csr_read_data_mem <= 64'b0;
+			csr_write_data_mem <= 64'b0;
 			rd_mem         <= 5'b0;
 			funct3_mem     <= 3'b0;
 			mem_read_mem   <= 1'b0;
 			mem_write_mem  <= 1'b0;
 			reg_write_mem  <= 1'b0;
+			is_csr_mem     <= 1'b0;
+			csr_write_enable_mem <= 1'b0;
+			csr_op_mem     <= CSR_OP_WRITE;
+			csr_addr_mem   <= 12'b0;
 			wb_sel_mem     <= WB_ALU;
 		end else if (!fetch_wait && !mem_wait) begin
 			// Allow load-use bubbles to flow, but hold MEM while dbus is still busy.
@@ -334,16 +414,23 @@ module core import common::*;(
 			inst_valid_mem <= inst_valid_ex;
 			alu_result_mem <= alu_result_ex;
 			rs2_data_mem   <= rs2_forwarded_ex;
+			csr_read_data_mem <= csr_read_data_ex;
+			csr_write_data_mem <= csr_write_data_ex;
 			rd_mem         <= rd_ex;
 			funct3_mem     <= funct3_ex;
 			mem_read_mem   <= mem_read_ex;
 			mem_write_mem  <= mem_write_ex;
 			reg_write_mem  <= reg_write_ex;
+			is_csr_mem     <= is_csr_ex;
+			csr_write_enable_mem <= csr_write_enable_ex;
+			csr_op_mem     <= csr_op_ex;
+			csr_addr_mem   <= csr_addr_ex;
 			wb_sel_mem     <= wb_sel_ex;
 		end
 	end
 
-	assign forward_data_mem = (wb_sel_mem == WB_PC4) ? (pc_mem + 64'd4) : alu_result_mem;
+	assign forward_data_mem = (wb_sel_mem == WB_PC4) ? (pc_mem + 64'd4) :
+		((wb_sel_mem == WB_CSR) ? csr_read_data_mem : alu_result_mem);
 
 	// ========== 8. MEM ==========
 	logic [63:0] load_data_mem, store_data_aligned_mem;
@@ -365,9 +452,13 @@ module core import common::*;(
 
 	// ========== 9. MEM_WB Reg ==========
 	logic [63:0] pc_wb, alu_result_wb, mem_data_wb;
+	logic [63:0] csr_read_data_wb, csr_write_data_wb;
 	logic [31:0] instr_wb;
 	logic [2:0]  funct3_wb;
 	logic        inst_valid_wb, mem_read_wb, mem_write_wb, commit_valid_wb, difftest_skip_wb;
+	logic        is_csr_wb, csr_write_enable_wb;
+	csr_op_t     csr_op_wb;
+	csr_addr_t   csr_addr_wb;
 	wb_sel_t     wb_sel_wb;
 
 	always_ff @(posedge clk) begin
@@ -377,11 +468,17 @@ module core import common::*;(
 			inst_valid_wb <= 1'b0;
 			alu_result_wb <= 64'b0;
 			mem_data_wb   <= 64'b0;
+			csr_read_data_wb <= 64'b0;
+			csr_write_data_wb <= 64'b0;
 			rd_wb         <= 5'b0;
 			funct3_wb     <= 3'b0;
 			mem_read_wb   <= 1'b0;
 			mem_write_wb  <= 1'b0;
 			reg_write_wb  <= 1'b0;
+			is_csr_wb     <= 1'b0;
+			csr_write_enable_wb <= 1'b0;
+			csr_op_wb     <= CSR_OP_WRITE;
+			csr_addr_wb   <= 12'b0;
 			wb_sel_wb     <= WB_ALU;
 		end else if (!fetch_wait && !mem_wait) begin
 			// Allow load-use bubbles to flow, but do not sample dbus before data_ok.
@@ -390,11 +487,17 @@ module core import common::*;(
 			inst_valid_wb <= inst_valid_mem;
 			alu_result_wb <= alu_result_mem;
 			mem_data_wb   <= load_data_mem;
+			csr_read_data_wb <= csr_read_data_mem;
+			csr_write_data_wb <= csr_write_data_mem;
 			rd_wb         <= rd_mem;
 			funct3_wb     <= funct3_mem;
 			mem_read_wb   <= mem_read_mem;
 			mem_write_wb  <= mem_write_mem;
 			reg_write_wb  <= reg_write_mem;
+			is_csr_wb     <= is_csr_mem;
+			csr_write_enable_wb <= csr_write_enable_mem;
+			csr_op_wb     <= csr_op_mem;
+			csr_addr_wb   <= csr_addr_mem;
 			wb_sel_wb     <= wb_sel_mem;
 		end
 	end
@@ -404,12 +507,14 @@ module core import common::*;(
 		case (wb_sel_wb)
 			WB_MEM: wb_data = mem_data_wb;
 			WB_PC4: wb_data = pc_wb + 64'd4;
+			WB_CSR: wb_data = csr_read_data_wb;
 			default: wb_data = alu_result_wb;
 		endcase
 	end
 	assign is_trap_wb = inst_valid_wb && (instr_wb == TRAP_INST);
 	assign commit_valid_wb = inst_valid_wb && !wb_fired;
 	assign reg_write_wb_fire = reg_write_wb && commit_valid_wb && (rd_wb != 5'b0);
+	assign csr_write_wb_fire = csr_write_enable_wb && commit_valid_wb;
 	assign trap_valid_wb = is_trap_wb && commit_valid_wb;
 	assign trap_code_wb = rf_dbg[10][7:0];
 	assign difftest_skip_wb = (mem_read_wb || mem_write_wb) && (alu_result_wb[31] == 1'b0);
@@ -451,7 +556,7 @@ module core import common::*;(
 `ifdef VERILATOR
 	DifftestInstrCommit DifftestInstrCommit(
 		.clock              (clk),
-		.coreid             (8'b0),
+		.coreid             (csr_mhartid[7:0]),
 		.index              (8'b0),
 		.valid              (commit_valid_wb),
 		.pc                 (pc_wb),
@@ -466,7 +571,7 @@ module core import common::*;(
 
 	DifftestArchIntRegState DifftestArchIntRegState (
 		.clock              (clk),
-		.coreid             (8'b0),
+		.coreid             (csr_mhartid[7:0]),
 		.gpr_0              (gpr_dt[0]),
 		.gpr_1              (gpr_dt[1]),
 		.gpr_2              (gpr_dt[2]),
@@ -503,7 +608,7 @@ module core import common::*;(
 
     DifftestTrapEvent DifftestTrapEvent(
 		.clock              (clk),
-		.coreid             (0),
+		.coreid             (csr_mhartid[7:0]),
 		.valid              (trap_valid_wb),
 		.code               (trap_code_wb[2:0]),
 		.pc                 (pc_wb),
@@ -513,25 +618,25 @@ module core import common::*;(
 
 	DifftestCSRState DifftestCSRState(
 		.clock              (clk),
-		.coreid             (0),
-		.priviledgeMode     (3),
-		.mstatus            (0),
-		.sstatus            (0 /* mstatus & SSTATUS_MASK */),
-		.mepc               (0),
-		.sepc               (0),
-		.mtval              (0),
-		.stval              (0),
-		.mtvec              (0),
-		.stvec              (0),
-		.mcause             (0),
-		.scause             (0),
-		.satp               (0),
-		.mip                (0),
-		.mie                (0),
-		.mscratch           (0),
-		.sscratch           (0),
-		.mideleg            (0),
-		.medeleg            (0)
+		.coreid             (csr_mhartid[7:0]),
+		.priviledgeMode     (2'd3),
+		.mstatus            (csr_mstatus),
+		.sstatus            (csr_sstatus),
+		.mepc               (csr_mepc),
+		.sepc               (csr_sepc),
+		.mtval              (csr_mtval),
+		.stval              (csr_stval),
+		.mtvec              (csr_mtvec),
+		.stvec              (csr_stvec),
+		.mcause             (csr_mcause),
+		.scause             (csr_scause),
+		.satp               (csr_satp),
+		.mip                (csr_mip),
+		.mie                (csr_mie),
+		.mscratch           (csr_mscratch),
+		.sscratch           (csr_sscratch),
+		.mideleg            (csr_mideleg),
+		.medeleg            (csr_medeleg)
 	);
 `endif
 endmodule

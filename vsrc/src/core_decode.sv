@@ -18,6 +18,7 @@ module core_decode import common::*;(
         decode_out.funct7 = instr[31:25];
         decode_out.alu_op = ALU_ADD;
         decode_out.wb_sel = WB_ALU;
+        decode_out.csr_op = CSR_OP_WRITE;
 
         case (opcode)
             7'b0010011, 7'b0000011, 7'b1100111, 7'b0011011: begin
@@ -126,6 +127,24 @@ module core_decode import common::*;(
                 decode_out.is_jump   = 1'b1;
                 decode_out.is_jalr   = 1'b1;
                 decode_out.wb_sel    = WB_PC4;
+            end
+            7'b1110011: begin
+                decode_out.is_csr       = (decode_out.funct3 != 3'b000);
+                decode_out.reg_write    = (decode_out.funct3 != 3'b000);
+                decode_out.wb_sel       = WB_CSR;
+                decode_out.csr_addr     = instr[31:20];
+                decode_out.csr_uses_imm = decode_out.funct3[2];
+                decode_out.csr_zimm     = {59'b0, instr[19:15]};
+                case (decode_out.funct3[1:0])
+                    2'b01: decode_out.csr_op = CSR_OP_WRITE;
+                    2'b10: decode_out.csr_op = CSR_OP_SET;
+                    2'b11: decode_out.csr_op = CSR_OP_CLEAR;
+                    default: begin
+                        decode_out.is_csr    = 1'b0;
+                        decode_out.reg_write = 1'b0;
+                        decode_out.wb_sel    = WB_ALU;
+                    end
+                endcase
             end
             default: ;
         endcase
