@@ -16,7 +16,7 @@ todos:
     status: completed
   - id: report
     content: 撰写 Lab5 report 草稿，预留实际上板输出/截图补充位，后续再导出并准备 handin zip
-    status: in_progress
+    status: completed
 isProject: false
 ---
 
