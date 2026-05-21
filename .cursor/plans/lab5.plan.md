@@ -4,19 +4,19 @@ overview: 完成 Lab 5 的特权级切换、ECALL/MRET trap 流程、Sv39 MMU、
 todos:
   - id: baseline
     content: 核对 Lab5 测试输入并记录 Lab4/Lab5 当前基线失败点
-    status: pending
+    status: completed
   - id: trap-priv
     content: 实现 ECALL/MRET 译码、精确 trap、mret 返回、动态特权级和 Difftest 接线
-    status: pending
+    status: completed
   - id: mmu
     content: 新增 Sv39 MMU 并在 SimTop/VTop 的 CBusArbiter 后接入
-    status: pending
+    status: completed
   - id: debug-tests
     content: 运行 Lab4 回归和 Lab5 主测试，按首个 mismatch 修复直到通过
-    status: pending
+    status: completed
   - id: report
     content: 撰写 Lab5 report 草稿，预留实际上板输出/截图补充位，后续再导出并准备 handin zip
-    status: pending
+    status: in_progress
 isProject: false
 ---
 

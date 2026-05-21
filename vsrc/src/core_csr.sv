@@ -21,6 +21,13 @@ module core_csr
     input  csr_addr_t waddr,
     input  u64        wdata,
 
+    input  logic       trap_wen,
+    input  u64         trap_mepc,
+    input  u64         trap_mcause,
+    input  priv_mode_t trap_prev_priv,
+    input  logic       mret_wen,
+    output priv_mode_t mret_priv,
+
     output u64        mstatus,
     output u64        sstatus,
     output u64        mepc,
@@ -50,6 +57,33 @@ module core_csr
     u64 mip_q, mie_q, mscratch_q, sscratch_q;
     u64 mideleg_q, medeleg_q, mcycle_q;
     u64 pmpaddr0_q, pmpcfg0_q;
+
+    function automatic u64 mstatus_on_trap(
+        input u64 status,
+        input priv_mode_t prev_priv
+    );
+        begin
+            mstatus_on_trap = status;
+            mstatus_on_trap[7]     = status[3];   // MPIE <- MIE
+            mstatus_on_trap[3]     = 1'b0;        // MIE <- 0
+            mstatus_on_trap[12:11] = prev_priv;   // MPP <- previous privilege
+            mstatus_on_trap = mstatus_on_trap & MSTATUS_MASK;
+        end
+    endfunction
+
+    function automatic u64 mstatus_on_mret(input u64 status);
+        priv_mode_t old_mpp;
+        begin
+            old_mpp = priv_mode_t'(status[12:11]);
+            mstatus_on_mret = status;
+            mstatus_on_mret[3]     = status[7];   // MIE <- MPIE
+            mstatus_on_mret[7]     = 1'b1;        // MPIE <- 1
+            mstatus_on_mret[12:11] = PRIV_U;      // MPP <- least privileged mode
+            if (old_mpp != PRIV_M)
+                mstatus_on_mret[17] = 1'b0;       // MPRV <- 0 when returning below M
+            mstatus_on_mret = mstatus_on_mret & MSTATUS_MASK;
+        end
+    endfunction
 
     function automatic u64 csr_value(input csr_addr_t addr);
         begin
@@ -144,6 +178,14 @@ module core_csr
                 default: ;
             endcase
         end
+
+        if (trap_wen) begin
+            mstatus_view = mstatus_on_trap(mstatus_q, trap_prev_priv);
+            mepc_view    = trap_mepc;
+            mcause_view  = trap_mcause;
+        end else if (mret_wen) begin
+            mstatus_view = mstatus_on_mret(mstatus_q);
+        end
     end
 
     always_ff @(posedge clk) begin
@@ -198,9 +240,18 @@ module core_csr
                     default: ;
                 endcase
             end
+
+            if (trap_wen) begin
+                mstatus_q <= mstatus_on_trap(mstatus_q, trap_prev_priv);
+                mepc_q    <= trap_mepc;
+                mcause_q  <= trap_mcause;
+            end else if (mret_wen) begin
+                mstatus_q <= mstatus_on_mret(mstatus_q);
+            end
         end
     end
 
+    assign mret_priv = priv_mode_t'(mstatus_q[12:11]);
     assign mstatus  = mstatus_view;
     assign sstatus  = mstatus_view & SSTATUS_MASK;
     assign mepc     = mepc_view;

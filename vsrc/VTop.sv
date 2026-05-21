@@ -8,6 +8,7 @@
 `include "util/IBusToCBus.sv"
 `include "util/DBusToCBus.sv"
 `include "util/CBusArbiter.sv"
+`include "util/MMU.sv"
 
 `endif
 module VTop 
@@ -25,6 +26,10 @@ module VTop
     dbus_resp_t dresp;
     cbus_req_t  icreq,  dcreq;
     cbus_resp_t icresp, dcresp;
+    cbus_req_t  mmu_ireq;
+    cbus_resp_t mmu_iresp;
+    priv_mode_t priv_mode_o;
+    u64         satp_o;
 
     core core(.*);
     IBusToCBus icvt(.*);
@@ -35,7 +40,20 @@ module VTop
     CBusArbiter mux(
         .ireqs({icreq, dcreq}),
         .iresps({icresp, dcresp}),
+        .oreq(mmu_ireq),
+        .oresp(mmu_iresp),
         .*
+    );
+
+    MMU mmu(
+        .clk(clk),
+        .reset(reset),
+        .ireq(mmu_ireq),
+        .iresp(mmu_iresp),
+        .oreq(oreq),
+        .oresp(oresp),
+        .priv_mode(priv_mode_o),
+        .satp(satp_o)
     );
 
 	always_ff @(posedge clk) begin

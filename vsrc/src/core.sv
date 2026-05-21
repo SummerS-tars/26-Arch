@@ -11,7 +11,9 @@ module core import common::*;(
 	input  ibus_resp_t iresp,
 	output dbus_req_t  dreq,
 	input  dbus_resp_t dresp,
-	input  logic       trint, swint, exint
+	input  logic       trint, swint, exint,
+	output priv_mode_t priv_mode_o,
+	output u64         satp_o
 );
 	localparam logic [31:0] TRAP_INST = 32'h0005006b;
 
@@ -79,6 +81,12 @@ module core import common::*;(
 	logic [63:0] cycle_cnt, instr_cnt;
 	logic        trap_valid_wb, is_trap_wb;
 	logic [7:0]  trap_code_wb;
+	logic        system_redirect_fire_wb;
+	logic [63:0] system_redirect_target_wb;
+	logic        ecall_commit_wb, mret_commit_wb;
+	logic        csr_trap_wen_wb, csr_mret_wen_wb;
+	logic [63:0] csr_trap_mcause_wb;
+	priv_mode_t  priv_mode_q, priv_mode_view, csr_mret_priv;
 
 	// ========== 2. PC & IF ==========
 	logic [63:0] pc, next_pc;
@@ -86,12 +94,13 @@ module core import common::*;(
 	logic        redirect_valid_ex, redirect_fire_ex;
 	logic [63:0] redirect_target_ex;
 
-	assign next_pc = redirect_fire_ex ? redirect_target_ex : (pc + 64'd4);
+	assign next_pc = system_redirect_fire_wb ? system_redirect_target_wb :
+		(redirect_fire_ex ? redirect_target_ex : (pc + 64'd4));
 
 	always_ff @(posedge clk) begin
 		if (reset)
 			pc <= PCINIT;
-		else if (redirect_fire_ex || !stall)
+		else if (system_redirect_fire_wb || redirect_fire_ex || !stall)
 			pc <= next_pc;
 	end
 
@@ -105,7 +114,7 @@ module core import common::*;(
 	logic        inst_valid_id;
 
 	always_ff @(posedge clk) begin
-		if (reset || redirect_fire_ex) begin
+		if (reset || system_redirect_fire_wb || redirect_fire_ex) begin
 			pc_id        <= 64'b0;
 			instr_id     <= 32'b0;
 			inst_valid_id <= 1'b0;
@@ -124,7 +133,7 @@ module core import common::*;(
 	logic [63:0] imm_id;
 	alu_op_t     alu_op_id;
 	logic        alu_src_id, use_pc_id, is_branch_id, is_jump_id, is_jalr_id;
-	logic        is_csr_id, csr_uses_imm_id;
+	logic        is_csr_id, is_ecall_id, is_mret_id, csr_uses_imm_id;
 	csr_op_t     csr_op_id;
 	csr_addr_t   csr_addr_id;
 	logic [63:0] csr_zimm_id;
@@ -152,6 +161,8 @@ module core import common::*;(
 	assign is_jump_id   = decode_id.is_jump;
 	assign is_jalr_id   = decode_id.is_jalr;
 	assign is_csr_id    = decode_id.is_csr;
+	assign is_ecall_id  = decode_id.is_ecall;
+	assign is_mret_id   = decode_id.is_mret;
 	assign csr_op_id    = decode_id.csr_op;
 	assign csr_addr_id  = decode_id.csr_addr;
 	assign csr_uses_imm_id = decode_id.csr_uses_imm;
@@ -180,14 +191,14 @@ module core import common::*;(
 	logic [6:0]  funct7_ex;
 	alu_op_t     alu_op_ex;
 	logic        alu_src_ex, use_pc_ex, is_branch_ex, is_jump_ex, is_jalr_ex;
-	logic        is_csr_ex, csr_uses_imm_ex;
+	logic        is_csr_ex, is_ecall_ex, is_mret_ex, csr_uses_imm_ex;
 	csr_op_t     csr_op_ex;
 	csr_addr_t   csr_addr_ex;
 	logic        inst_valid_ex, mem_read_ex, mem_write_ex, reg_write_ex;
 	wb_sel_t     wb_sel_ex;
 
 	always_ff @(posedge clk) begin
-		if (reset || redirect_fire_ex) begin
+		if (reset || system_redirect_fire_wb || redirect_fire_ex) begin
 			// Bubble: clear all control signals
 			pc_ex         <= 64'b0;
 			instr_ex      <= 32'b0;
@@ -211,6 +222,8 @@ module core import common::*;(
 			is_jump_ex    <= 1'b0;
 			is_jalr_ex    <= 1'b0;
 			is_csr_ex     <= 1'b0;
+			is_ecall_ex   <= 1'b0;
+			is_mret_ex    <= 1'b0;
 			csr_op_ex     <= CSR_OP_WRITE;
 			csr_addr_ex   <= 12'b0;
 			csr_uses_imm_ex <= 1'b0;
@@ -238,6 +251,8 @@ module core import common::*;(
 			is_jump_ex    <= 1'b0;
 			is_jalr_ex    <= 1'b0;
 			is_csr_ex     <= 1'b0;
+			is_ecall_ex   <= 1'b0;
+			is_mret_ex    <= 1'b0;
 			csr_op_ex     <= CSR_OP_WRITE;
 			csr_addr_ex   <= 12'b0;
 			csr_uses_imm_ex <= 1'b0;
@@ -265,6 +280,8 @@ module core import common::*;(
 			is_jump_ex    <= is_jump_id;
 			is_jalr_ex    <= is_jalr_id;
 			is_csr_ex     <= is_csr_id;
+			is_ecall_ex   <= is_ecall_id;
+			is_mret_ex    <= is_mret_id;
 			csr_op_ex     <= csr_op_id;
 			csr_addr_ex   <= csr_addr_id;
 			csr_uses_imm_ex <= csr_uses_imm_id;
@@ -308,6 +325,12 @@ module core import common::*;(
 		.wop       (csr_op_wb),
 		.waddr     (csr_addr_wb),
 		.wdata     (csr_write_data_wb),
+		.trap_wen  (csr_trap_wen_wb),
+		.trap_mepc (pc_wb),
+		.trap_mcause (csr_trap_mcause_wb),
+		.trap_prev_priv (priv_mode_q),
+		.mret_wen  (csr_mret_wen_wb),
+		.mret_priv (csr_mret_priv),
 		.mstatus   (csr_mstatus),
 		.sstatus   (csr_sstatus),
 		.mepc      (csr_mepc),
@@ -383,13 +406,13 @@ module core import common::*;(
 	logic [4:0]  rd_mem;
 	logic [2:0]  funct3_mem;
 	logic        inst_valid_mem, mem_read_mem, mem_write_mem, reg_write_mem;
-	logic        is_csr_mem, csr_write_enable_mem;
+	logic        is_csr_mem, is_ecall_mem, is_mret_mem, csr_write_enable_mem;
 	csr_op_t     csr_op_mem;
 	csr_addr_t   csr_addr_mem;
 	wb_sel_t     wb_sel_mem;
 
 	always_ff @(posedge clk) begin
-		if (reset) begin
+		if (reset || system_redirect_fire_wb) begin
 			pc_mem         <= 64'b0;
 			instr_mem      <= 32'b0;
 			inst_valid_mem <= 1'b0;
@@ -403,6 +426,8 @@ module core import common::*;(
 			mem_write_mem  <= 1'b0;
 			reg_write_mem  <= 1'b0;
 			is_csr_mem     <= 1'b0;
+			is_ecall_mem   <= 1'b0;
+			is_mret_mem    <= 1'b0;
 			csr_write_enable_mem <= 1'b0;
 			csr_op_mem     <= CSR_OP_WRITE;
 			csr_addr_mem   <= 12'b0;
@@ -422,6 +447,8 @@ module core import common::*;(
 			mem_write_mem  <= mem_write_ex;
 			reg_write_mem  <= reg_write_ex;
 			is_csr_mem     <= is_csr_ex;
+			is_ecall_mem   <= is_ecall_ex;
+			is_mret_mem    <= is_mret_ex;
 			csr_write_enable_mem <= csr_write_enable_ex;
 			csr_op_mem     <= csr_op_ex;
 			csr_addr_mem   <= csr_addr_ex;
@@ -456,13 +483,13 @@ module core import common::*;(
 	logic [31:0] instr_wb;
 	logic [2:0]  funct3_wb;
 	logic        inst_valid_wb, mem_read_wb, mem_write_wb, commit_valid_wb, difftest_skip_wb;
-	logic        is_csr_wb, csr_write_enable_wb;
+	logic        is_csr_wb, is_ecall_wb, is_mret_wb, csr_write_enable_wb;
 	csr_op_t     csr_op_wb;
 	csr_addr_t   csr_addr_wb;
 	wb_sel_t     wb_sel_wb;
 
 	always_ff @(posedge clk) begin
-		if (reset) begin
+		if (reset || system_redirect_fire_wb) begin
 			pc_wb         <= 64'b0;
 			instr_wb      <= 32'b0;
 			inst_valid_wb <= 1'b0;
@@ -476,6 +503,8 @@ module core import common::*;(
 			mem_write_wb  <= 1'b0;
 			reg_write_wb  <= 1'b0;
 			is_csr_wb     <= 1'b0;
+			is_ecall_wb   <= 1'b0;
+			is_mret_wb    <= 1'b0;
 			csr_write_enable_wb <= 1'b0;
 			csr_op_wb     <= CSR_OP_WRITE;
 			csr_addr_wb   <= 12'b0;
@@ -495,6 +524,8 @@ module core import common::*;(
 			mem_write_wb  <= mem_write_mem;
 			reg_write_wb  <= reg_write_mem;
 			is_csr_wb     <= is_csr_mem;
+			is_ecall_wb   <= is_ecall_mem;
+			is_mret_wb    <= is_mret_mem;
 			csr_write_enable_wb <= csr_write_enable_mem;
 			csr_op_wb     <= csr_op_mem;
 			csr_addr_wb   <= csr_addr_mem;
@@ -515,6 +546,17 @@ module core import common::*;(
 	assign commit_valid_wb = inst_valid_wb && !wb_fired;
 	assign reg_write_wb_fire = reg_write_wb && commit_valid_wb && (rd_wb != 5'b0);
 	assign csr_write_wb_fire = csr_write_enable_wb && commit_valid_wb;
+	assign ecall_commit_wb = is_ecall_wb && commit_valid_wb;
+	assign mret_commit_wb = is_mret_wb && commit_valid_wb;
+	assign system_redirect_fire_wb = ecall_commit_wb || mret_commit_wb;
+	assign system_redirect_target_wb = mret_commit_wb ? csr_mepc : csr_mtvec;
+	assign csr_trap_wen_wb = ecall_commit_wb;
+	assign csr_mret_wen_wb = mret_commit_wb;
+	assign csr_trap_mcause_wb = (priv_mode_q == PRIV_U) ? 64'd8 : 64'd11;
+	assign priv_mode_view = ecall_commit_wb ? PRIV_M :
+		(mret_commit_wb ? csr_mret_priv : priv_mode_q);
+	assign priv_mode_o = priv_mode_view;
+	assign satp_o = csr_satp;
 	assign trap_valid_wb = is_trap_wb && commit_valid_wb;
 	assign trap_code_wb = rf_dbg[10][7:0];
 	assign difftest_skip_wb = (mem_read_wb || mem_write_wb) && (alu_result_wb[31] == 1'b0);
@@ -522,10 +564,22 @@ module core import common::*;(
 	always_ff @(posedge clk) begin
 		if (reset) begin
 			wb_fired <= 1'b0;
+		end else if (system_redirect_fire_wb) begin
+			wb_fired <= 1'b0;
 		end else if (!fetch_wait && !mem_wait) begin
 			wb_fired <= 1'b0;
 		end else if (commit_valid_wb) begin
 			wb_fired <= 1'b1;
+		end
+	end
+
+	always_ff @(posedge clk) begin
+		if (reset) begin
+			priv_mode_q <= PRIV_M;
+		end else if (ecall_commit_wb) begin
+			priv_mode_q <= PRIV_M;
+		end else if (mret_commit_wb) begin
+			priv_mode_q <= csr_mret_priv;
 		end
 	end
 
@@ -619,7 +673,7 @@ module core import common::*;(
 	DifftestCSRState DifftestCSRState(
 		.clock              (clk),
 		.coreid             (csr_mhartid[7:0]),
-		.priviledgeMode     (2'd3),
+		.priviledgeMode     (priv_mode_view),
 		.mstatus            (csr_mstatus),
 		.sstatus            (csr_sstatus),
 		.mepc               (csr_mepc),

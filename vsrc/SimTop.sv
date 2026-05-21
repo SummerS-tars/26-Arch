@@ -10,6 +10,7 @@
 `include "util/IBusToCBus.sv"
 `include "util/DBusToCBus.sv"
 `include "util/CBusArbiter.sv"
+`include "util/MMU.sv"
 
 module SimTop import common::*;(
   input         clock,
@@ -35,9 +36,14 @@ module SimTop import common::*;(
     dbus_resp_t dresp;
     cbus_req_t  icreq,  dcreq;
     cbus_resp_t icresp, dcresp;
+    cbus_req_t  mmu_ireq;
+    cbus_resp_t mmu_iresp;
+    priv_mode_t core_priv_mode;
+    u64         core_satp;
 
     core core(
-      .clk(clock), .reset, .ireq, .iresp, .dreq, .dresp, .trint, .swint, .exint
+      .clk(clock), .reset, .ireq, .iresp, .dreq, .dresp, .trint, .swint, .exint,
+      .priv_mode_o(core_priv_mode), .satp_o(core_satp)
     );
 
     IBusToCBus icvt(.*);
@@ -46,7 +52,19 @@ module SimTop import common::*;(
         .clk(clock), .reset,
         .ireqs({icreq, dcreq}),
         .iresps({icresp, dcresp}),
-        .*
+        .oreq(mmu_ireq),
+        .oresp(mmu_iresp)
+    );
+
+    MMU mmu(
+        .clk(clock),
+        .reset(reset),
+        .ireq(mmu_ireq),
+        .iresp(mmu_iresp),
+        .oreq(oreq),
+        .oresp(oresp),
+        .priv_mode(core_priv_mode),
+        .satp(core_satp)
     );
 
     RAMHelper2 ram(

@@ -238,6 +238,12 @@ typedef enum logic [1:0] {
     CSR_OP_CLEAR = 2'd2
 } csr_op_t;
 
+typedef enum logic [1:0] {
+    PRIV_U = 2'd0,
+    PRIV_S = 2'd1,
+    PRIV_M = 2'd3
+} priv_mode_t;
+
 typedef struct packed {
     u5       rd;
     u5       rs1;
@@ -255,6 +261,8 @@ typedef struct packed {
     logic    is_jump;
     logic    is_jalr;
     logic    is_csr;
+    logic    is_ecall;
+    logic    is_mret;
     csr_op_t csr_op;
     csr_addr_t csr_addr;
     logic    csr_uses_imm;
