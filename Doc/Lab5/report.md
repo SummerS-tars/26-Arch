@@ -147,6 +147,14 @@ trapinit ok
 plicinit ok
 userinit ok
 Return from init! Test passed
+^CCore 0: SOME SIGNAL STOPS THE PROGRAM at pc = 0x7ffff000c
+total guest instructions = 336,504
+instrCnt = 336,504, cycleCnt = 4,740,965, IPC = 0.070978
+Seed=0 Guest cycle spent: 4,740,967 (this will be different from cycleCnt if emu loads a snapshot)
+Host time spent: 2,020ms
+This emulator compiled with JTAG Remote Bitbang client. To enable, use +jtag_rbb_enable=1.
+Listening on port 23334
+make: *** [Makefile:59: test-lab5] 中断
 ```
 
 根据实验要求，Lab5 最后卡住是正常现象。出现 `Return from init! Test passed` 说明仿真部分已经通过。
