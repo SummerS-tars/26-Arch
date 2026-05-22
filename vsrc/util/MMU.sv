@@ -22,10 +22,12 @@ module MMU
     typedef enum logic [2:0] {
         STATE_IDLE,
         STATE_WALK,
-        STATE_ISSUE
+        STATE_ISSUE,
+        STATE_WAIT_CLEAR
     } state_t;
 
     state_t state_q;
+    state_t resume_state_q;
     cbus_req_t saved_req_q;
     u64 vaddr_q;
     u64 pte_addr_q;
@@ -35,6 +37,7 @@ module MMU
     logic translate_en;
     logic pte_done;
     logic leaf_pte;
+    logic resp_done;
     u64 pte_data;
     u64 next_pte_addr;
     u64 leaf_paddr;
@@ -65,7 +68,8 @@ module MMU
     endfunction
 
     assign translate_en = (priv_mode != PRIV_M) && (satp[63:60] == 4'd8);
-    assign pte_done = oresp.ready && oresp.last;
+    assign resp_done = oresp.ready && oresp.last;
+    assign pte_done = resp_done;
     assign pte_data = oresp.data;
     assign leaf_pte = |pte_data[3:1];
     assign next_pte_addr = ({8'b0, pte_data[53:10], 12'b0}) +
@@ -105,6 +109,10 @@ module MMU
                 oreq  = final_req;
                 iresp = oresp;
             end
+            STATE_WAIT_CLEAR: begin
+                oreq  = '0;
+                iresp = '0;
+            end
             default: ;
         endcase
     end
@@ -112,6 +120,7 @@ module MMU
     always_ff @(posedge clk) begin
         if (reset) begin
             state_q           <= STATE_IDLE;
+            resume_state_q    <= STATE_IDLE;
             saved_req_q       <= '0;
             vaddr_q           <= 64'b0;
             pte_addr_q        <= 64'b0;
@@ -127,26 +136,35 @@ module MMU
                         pte_addr_q  <= ({8'b0, satp[43:0], 12'b0}) +
                             (vpn_index(ireq.addr, 2'd2) << 3);
                         state_q     <= STATE_WALK;
+                        resume_state_q <= STATE_IDLE;
                     end
                 end
                 STATE_WALK: begin
                     if (pte_done) begin
                         if (!pte_data[0]) begin
                             translated_addr_q <= vaddr_q;
-                            state_q           <= STATE_ISSUE;
+                            resume_state_q    <= STATE_ISSUE;
+                            state_q           <= STATE_WAIT_CLEAR;
                         end else if (leaf_pte || level_q == 2'd0) begin
                             translated_addr_q <= leaf_paddr;
-                            state_q           <= STATE_ISSUE;
+                            resume_state_q    <= STATE_ISSUE;
+                            state_q           <= STATE_WAIT_CLEAR;
                         end else begin
                             level_q    <= level_q - 2'd1;
                             pte_addr_q <= next_pte_addr;
+                            resume_state_q <= STATE_WALK;
+                            state_q    <= STATE_WAIT_CLEAR;
                         end
                     end
                 end
                 STATE_ISSUE: begin
-                    if (oresp.ready && oresp.last) begin
-                        state_q <= STATE_IDLE;
+                    if (resp_done) begin
+                        resume_state_q <= STATE_IDLE;
+                        state_q        <= STATE_WAIT_CLEAR;
                     end
+                end
+                STATE_WAIT_CLEAR: begin
+                    state_q <= resume_state_q;
                 end
                 default: state_q <= STATE_IDLE;
             endcase
