@@ -29,8 +29,8 @@
 ```text
 Core
  ├─ IBus -> IBusToCBus ┐
- └─ DBus -> DBusToCBus ├─ CBusArbiter -> MMU -> RAM / MMIO
-                       ┘
+ │                     ├─ CBusArbiter -> MMU -> RAM / MMIO
+ └─ DBus -> DBusToCBus ┘
 ```
 
 `core` 额外向顶层导出当前 `priv_mode` 和 `satp`，供 MMU 判断是否需要启用 Sv39 翻译。
@@ -114,23 +114,25 @@ Lab5 的用户程序在 U 模式下运行，取指地址和数据访存地址都
 
 因此 MMU 放在 CBus 仲裁之后，由取指和访存共享。这样只需要一套页表 walk 状态机，也更符合实验指导中“单一 MMU”的要求。
 
+### 4.4 仿真镜像和上板镜像必须保持一致
+
+调试过程中曾出现过一个比较容易忽略的问题：Verilator 仿真使用的是 `kernel.bin`，而 Vivado BRAM 初始化使用的是 `kernel.coe`。最初我只修复并补齐了本地仿真使用的 `kernel.bin`，包括 BSS 补零、PMP 初始化和 PTE A/D 位兼容处理，但上板使用的 `kernel.coe` 仍是旧内容。
+
+这会导致仿真已经能输出 `Return from init! Test passed`，但上板仍然卡在 `userinit ok` 之后。后续通过重新用 `bin2coe.py` 从通过仿真的 `kernel.bin` 生成 `kernel.coe`，并在 Vivado 中重新生成 BRAM IP 的 output products，才保证板端运行的程序和仿真程序一致。
+
+这个问题说明，上板调试时不能只看 RTL 是否更新，还要确认片上存储器的初始化文件是否同步更新。
+
+### 4.5 MMU 需要适配板端 ready 时序
+
+另一个上板阶段暴露的问题是 MMU 与板端 BRAM 访问时序的配合。仿真 RAM 的响应比较理想，而 Vivado 板级路径中的 BRAM wrapper 有固定访问延迟，且 `ready/last` 相对请求可能多保持或延后一拍。
+
+原来的 MMU 状态机在页表 walk 时，只要看到 `oresp.ready && oresp.last`，就立即进入下一级页表访问或发起最终访存请求。这样在连续三级页表 walk 中，上一笔请求的响应有可能被误认为下一笔请求的响应；在最后一级 PTE 之后，也可能把页表项响应和真正的用户态取指响应混在一起。现象上表现为：串口已经打印到 `userinit ok`，但执行 `mret` 后无法正确运行用户态 `initcode`，因此没有最后一句输出。
+
+修复方法是在 MMU 中增加一个 `STATE_WAIT_CLEAR` 状态。每次完成一次 PTE 读取或最终访存后，先插入一个空拍，将 `oreq` 和 `iresp` 拉低，再进入下一次请求。这样可以把连续请求之间的响应边界隔开，避免板端 `ready` 多一拍带来的误判。需要注意的是，这里不能简单等待 `ready` 变低，因为板级外设路径在 `valid=0` 时也可能让 `ready` 保持为 1，直接等待低电平反而可能造成死锁。
+
 ## 5. 仿真结果
 
-本次先回归 Lab4：
-
-```bash
-make test-lab4
-```
-
-关键输出为：
-
-```text
-The first instruction of core 0 has commited. Difftest enabled.
-Core 0: HIT GOOD TRAP at pc = 0x8001fff8
-instrCnt = 32,766, cycleCnt = 158,411, IPC = 0.206842
-```
-
-随后运行 Lab5：
+Test Lab5：
 
 ```bash
 make test-lab5
@@ -165,28 +167,9 @@ make: *** [Makefile:59: test-lab5] 中断
 
 待补充内容：
 
-- Vivado 综合 / 实现 / 生成 bitstream 的结果截图
-- 串口调试助手输出截图
-- 串口输出文字记录
-- 上板测试日期与简短说明
+![lab5_serial_output.png](./ref/lab5_serial_output.png)
 
-图片位置预留：
-
-```text
-待补充：./ref/lab5_serial_output.png
-```
-
-预期串口输出应包含：
-
-```text
-xv6 kernel is booting
-kinit ok
-procinit ok
-trapinit ok
-plicinit ok
-userinit ok
-Return from init! Test passed
-```
+符合预期测试的串口输出。
 
 ## 7. 总结
 
