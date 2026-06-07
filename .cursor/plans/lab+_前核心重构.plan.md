@@ -4,28 +4,28 @@ overview: 在已通过 Lab6 的 `refactor/before_labplus` 分支上，按 Refact
 todos:
   - id: baseline
     content: 在 refactor/before_labplus 跑 Lab4/Lab5/Lab6 基线并记录输出
-    status: pending
+    status: completed
   - id: step1-trap-const
     content: 第1步：trap 常量迁入 trap.sv/csr_pkg，回归 Lab4+Lab6
-    status: pending
+    status: completed
   - id: step2-mem-helpers
     content: 第2步：访存 helper 抽出 mem_helpers.sv，回归 Lab2+Lab6
-    status: pending
+    status: completed
   - id: step3a-id-ex
     content: 第3a步：引入 id_ex_t 替换 ID/EX 寄存器，回归
-    status: pending
+    status: completed
   - id: step3b-ex-mem
     content: 第3b步：引入 ex_mem_t 替换 EX/MEM 寄存器，回归
-    status: pending
+    status: completed
   - id: step3c-mem-wb
     content: 第3c步：引入 mem_wb_t 替换 MEM/WB 寄存器，回归
-    status: pending
+    status: completed
   - id: step4-trap-ctrl
     content: 第4步：新建 core_trap_ctrl.sv，SimTop/VTop include，全量回归
-    status: pending
+    status: completed
   - id: update-docs
     content: 更新 Refactor_TODO.md 勾选 1–4，status.md 注明重构完成边界
-    status: pending
+    status: completed
 isProject: false
 ---
 
