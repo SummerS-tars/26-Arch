@@ -133,6 +133,8 @@ module core_decode import common::*;(
                     decode_out.is_ecall = 1'b1;
                 end else if (instr == 32'h30200073) begin
                     decode_out.is_mret = 1'b1;
+                end else if (instr == 32'h12000073) begin
+                    // sfence.vma is a no-op for this simple in-order MMU model.
                 end else begin
                     decode_out.is_csr       = (decode_out.funct3 != 3'b000);
                     decode_out.reg_write    = (decode_out.funct3 != 3'b000);
@@ -154,6 +156,14 @@ module core_decode import common::*;(
             end
             default: ;
         endcase
+
+        if ((opcode == 7'b1110011) && (decode_out.funct3 == 3'b000) &&
+            !decode_out.is_ecall && !decode_out.is_mret && (instr != 32'h12000073)) begin
+            decode_out.is_illegal = 1'b1;
+        end
+        if (instr == 32'b0) begin
+            decode_out.is_illegal = 1'b1;
+        end
     end
 endmodule
 

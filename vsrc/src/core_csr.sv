@@ -24,11 +24,13 @@ module core_csr
     input  logic       trap_wen,
     input  u64         trap_mepc,
     input  u64         trap_mcause,
+    input  u64         trap_mtval,
     input  priv_mode_t trap_prev_priv,
     input  logic       mret_wen,
     output priv_mode_t mret_priv,
 
     output u64        mstatus,
+    output u64        mstatus_pre_trap,
     output u64        sstatus,
     output u64        mepc,
     output u64        sepc,
@@ -82,6 +84,25 @@ module core_csr
             if (old_mpp != PRIV_M)
                 mstatus_on_mret[17] = 1'b0;       // MPRV <- 0 when returning below M
             mstatus_on_mret = mstatus_on_mret & MSTATUS_MASK;
+        end
+    endfunction
+
+    function automatic u64 mstatus_after_write(
+        input u64        status,
+        input logic      write_en,
+        input csr_addr_t addr,
+        input u64        data
+    );
+        begin
+            mstatus_after_write = status;
+            if (write_en) begin
+                case (addr)
+                    CSR_MSTATUS: mstatus_after_write = data & MSTATUS_MASK;
+                    CSR_SSTATUS: mstatus_after_write = (status & ~SSTATUS_WRITABLE_MASK) |
+                                                       (data & SSTATUS_WRITABLE_MASK);
+                    default: ;
+                endcase
+            end
         end
     endfunction
 
@@ -155,9 +176,13 @@ module core_csr
 
         if (wen) begin
             case (waddr)
-                CSR_MSTATUS:  mstatus_view  = write_next & MSTATUS_MASK;
-                CSR_SSTATUS:  mstatus_view  = (mstatus_q & ~SSTATUS_WRITABLE_MASK) |
-                                               (write_next & SSTATUS_WRITABLE_MASK);
+                CSR_MSTATUS: begin
+                    mstatus_view = write_next & MSTATUS_MASK;
+                end
+                CSR_SSTATUS: begin
+                    mstatus_view = (mstatus_q & ~SSTATUS_WRITABLE_MASK) |
+                                   (write_next & SSTATUS_WRITABLE_MASK);
+                end
                 CSR_MEPC:     mepc_view     = write_next;
                 CSR_SEPC:     sepc_view     = write_next;
                 CSR_MTVAL:    mtval_view    = write_next;
@@ -180,9 +205,13 @@ module core_csr
         end
 
         if (trap_wen) begin
-            mstatus_view = mstatus_on_trap(mstatus_q, trap_prev_priv);
+            mstatus_view = mstatus_on_trap(
+                mstatus_after_write(mstatus_q, wen, waddr, write_next),
+                trap_prev_priv
+            );
             mepc_view    = trap_mepc;
             mcause_view  = trap_mcause;
+            mtval_view   = trap_mtval;
         end else if (mret_wen) begin
             mstatus_view = mstatus_on_mret(mstatus_q);
         end
@@ -242,9 +271,13 @@ module core_csr
             end
 
             if (trap_wen) begin
-                mstatus_q <= mstatus_on_trap(mstatus_q, trap_prev_priv);
+                mstatus_q <= mstatus_on_trap(
+                    mstatus_after_write(mstatus_q, wen, waddr, write_next),
+                    trap_prev_priv
+                );
                 mepc_q    <= trap_mepc;
                 mcause_q  <= trap_mcause;
+                mtval_q   <= trap_mtval;
             end else if (mret_wen) begin
                 mstatus_q <= mstatus_on_mret(mstatus_q);
             end
@@ -253,6 +286,7 @@ module core_csr
 
     assign mret_priv = priv_mode_t'(mstatus_q[12:11]);
     assign mstatus  = mstatus_view;
+    assign mstatus_pre_trap = mstatus_q;
     assign sstatus  = mstatus_view & SSTATUS_MASK;
     assign mepc     = mepc_view;
     assign sepc     = sepc_view;

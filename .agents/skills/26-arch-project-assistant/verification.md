@@ -15,6 +15,10 @@ Use the repository `Makefile` flow by default.
 - `make test-lab1-extra`: run stronger Lab1 coverage
 - `make test-lab2`: run the Lab2 test
 - `make test-lab3`: run the Lab3 test
+- `make test-lab4`: run the Lab4 CSR / privilege-visible state test
+- `timeout 25s make test-lab5 || true`: run the Lab5 kernel regression; success is determined by the kernel success line because the image may continue running
+- `make test-lab6`: run the Lab6 no-diff privileged exception/interrupt test
+- `TEST=sys ./build/emu --no-diff -i ./ready-to-run/lab6/lab6-test.bin -C 8000000 --force-dump-result`: direct Lab6 run with an explicit cycle cap
 - `make handin`: package submission assets
 
 If these commands change in the future, update this file before changing the main skill.
@@ -31,6 +35,8 @@ Typical high-signal success lines include:
 
 - `The first instruction of core 0 has commited. Difftest enabled.`
 - `Core 0: HIT GOOD TRAP at pc = ...`
+- `Return from init! Test passed` for the Lab5 kernel image
+- `Privileged test finished.` and `Exit with code = 0` for Lab6
 - `instrCnt = ... cycleCnt = ... IPC = ...`
 
 ## What failure usually looks like

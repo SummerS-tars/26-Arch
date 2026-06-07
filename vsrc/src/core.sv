@@ -16,6 +16,19 @@ module core import common::*;(
 	output u64         satp_o
 );
 	localparam logic [31:0] TRAP_INST = 32'h0005006b;
+	localparam logic [63:0] CAUSE_INST_MISALIGNED  = 64'd0;
+	localparam logic [63:0] CAUSE_ILLEGAL_INST     = 64'd2;
+	localparam logic [63:0] CAUSE_LOAD_MISALIGNED  = 64'd4;
+	localparam logic [63:0] CAUSE_STORE_MISALIGNED = 64'd6;
+	localparam logic [63:0] CAUSE_ECALL_U          = 64'd8;
+	localparam logic [63:0] CAUSE_ECALL_S          = 64'd9;
+	localparam logic [63:0] CAUSE_ECALL_M          = 64'd11;
+	localparam logic [63:0] CAUSE_IRQ_SW           = 64'h8000_0000_0000_0003;
+	localparam logic [63:0] CAUSE_IRQ_TIMER        = 64'h8000_0000_0000_0007;
+	localparam logic [63:0] CAUSE_IRQ_EXTERNAL     = 64'h8000_0000_0000_000b;
+	localparam logic [63:0] MIP_MSIP               = 64'h0000_0000_0000_0008;
+	localparam logic [63:0] MIP_MTIP               = 64'h0000_0000_0000_0080;
+	localparam logic [63:0] MIP_MEIP               = 64'h0000_0000_0000_0800;
 
 	function automatic msize_t mem_size_from_funct3(input logic [2:0] funct3);
 		begin
@@ -72,6 +85,51 @@ module core import common::*;(
 		end
 	endfunction
 
+	function automatic logic mem_addr_misaligned(
+		input logic [63:0] addr,
+		input msize_t      size
+	);
+		begin
+			case (size)
+				MSIZE2:  mem_addr_misaligned = addr[0];
+				MSIZE4:  mem_addr_misaligned = |addr[1:0];
+				MSIZE8:  mem_addr_misaligned = |addr[2:0];
+				default: mem_addr_misaligned = 1'b0;
+			endcase
+		end
+	endfunction
+
+	function automatic logic [63:0] ecall_cause(input priv_mode_t mode);
+		begin
+			case (mode)
+				PRIV_U:  ecall_cause = CAUSE_ECALL_U;
+				PRIV_S:  ecall_cause = CAUSE_ECALL_S;
+				default: ecall_cause = CAUSE_ECALL_M;
+			endcase
+		end
+	endfunction
+
+	function automatic logic mstatus_mie_after_wb(
+		input logic [63:0] status,
+		input logic        write_en,
+		input csr_op_t     op,
+		input csr_addr_t   addr,
+		input logic [63:0] data
+	);
+		logic [63:0] next_status;
+		begin
+			next_status = status;
+			if (write_en && (addr == 12'h300)) begin
+				case (op)
+					CSR_OP_SET:   next_status = status | data;
+					CSR_OP_CLEAR: next_status = status & ~data;
+					default:      next_status = data;
+				endcase
+			end
+			mstatus_mie_after_wb = next_status[3];
+		end
+	endfunction
+
 	// ========== 1. Register File ==========
 	logic [63:0] wb_data;
 	logic        reg_write_wb, reg_write_wb_fire, wb_fired;
@@ -83,14 +141,20 @@ module core import common::*;(
 	logic [7:0]  trap_code_wb;
 	logic        system_redirect_fire_wb;
 	logic [63:0] system_redirect_target_wb;
-	logic        ecall_commit_wb, mret_commit_wb;
+	logic        ecall_commit_wb, mret_commit_wb, exception_commit_wb, interrupt_commit_wb;
+	logic        commit_fire_wb, interrupt_request_wb;
+	logic        trap_commit_wb, system_pending_wb, system_redirect_ready_wb, system_wb_waiting;
+	logic        system_event_ex, system_event_mem, system_flush_front;
 	logic        csr_trap_wen_wb, csr_mret_wen_wb;
-	logic [63:0] csr_trap_mcause_wb;
+	logic [63:0] csr_trap_mepc_wb, csr_trap_mcause_wb, csr_trap_mtval_wb;
+	logic [63:0] hw_mip, interrupt_pending_mask_wb, interrupt_cause_wb;
+	logic        interrupt_enabled_wb, interrupt_pending_wb, mstatus_mie_effective_wb;
 	priv_mode_t  priv_mode_q, priv_mode_view, csr_mret_priv;
 
 	// ========== 2. PC & IF ==========
 	logic [63:0] pc, next_pc;
 	logic        stall, fetch_wait, mem_wait, mem_access_mem;
+	logic        fetch_wait_q, mem_wait_q;
 	logic        redirect_valid_ex, redirect_fire_ex;
 	logic [63:0] redirect_target_ex;
 
@@ -137,7 +201,7 @@ module core import common::*;(
 	csr_op_t     csr_op_id;
 	csr_addr_t   csr_addr_id;
 	logic [63:0] csr_zimm_id;
-	logic        mem_read_id, mem_write_id, reg_write_id;
+	logic        mem_read_id, mem_write_id, reg_write_id, is_illegal_id;
 	wb_sel_t     wb_sel_id;
 
 	core_decode decode(
@@ -163,6 +227,7 @@ module core import common::*;(
 	assign is_csr_id    = decode_id.is_csr;
 	assign is_ecall_id  = decode_id.is_ecall;
 	assign is_mret_id   = decode_id.is_mret;
+	assign is_illegal_id = decode_id.is_illegal;
 	assign csr_op_id    = decode_id.csr_op;
 	assign csr_addr_id  = decode_id.csr_addr;
 	assign csr_uses_imm_id = decode_id.csr_uses_imm;
@@ -195,6 +260,8 @@ module core import common::*;(
 	csr_op_t     csr_op_ex;
 	csr_addr_t   csr_addr_ex;
 	logic        inst_valid_ex, mem_read_ex, mem_write_ex, reg_write_ex;
+	logic        exception_valid_ex;
+	logic [63:0] exception_cause_ex, exception_tval_ex;
 	wb_sel_t     wb_sel_ex;
 
 	always_ff @(posedge clk) begin
@@ -218,6 +285,9 @@ module core import common::*;(
 			mem_read_ex   <= 1'b0;
 			mem_write_ex  <= 1'b0;
 			reg_write_ex  <= 1'b0;
+			exception_valid_ex <= 1'b0;
+			exception_cause_ex <= 64'b0;
+			exception_tval_ex  <= 64'b0;
 			is_branch_ex  <= 1'b0;
 			is_jump_ex    <= 1'b0;
 			is_jalr_ex    <= 1'b0;
@@ -228,7 +298,10 @@ module core import common::*;(
 			csr_addr_ex   <= 12'b0;
 			csr_uses_imm_ex <= 1'b0;
 			wb_sel_ex     <= WB_ALU;
-		end else if ((load_use_hazard && !mem_wait && !fetch_wait) || (mem_access_mem && !mem_wait && !fetch_wait)) begin
+		end else if ((system_event_ex && !fetch_wait && !mem_wait) ||
+			(system_event_mem && !fetch_wait && !mem_wait) ||
+			(load_use_hazard && !mem_wait && !fetch_wait) ||
+			(mem_access_mem && !mem_wait && !fetch_wait)) begin
 			pc_ex         <= 64'b0;
 			instr_ex      <= 32'b0;
 			inst_valid_ex <= 1'b0;
@@ -247,6 +320,9 @@ module core import common::*;(
 			mem_read_ex   <= 1'b0;
 			mem_write_ex  <= 1'b0;
 			reg_write_ex  <= 1'b0;
+			exception_valid_ex <= 1'b0;
+			exception_cause_ex <= 64'b0;
+			exception_tval_ex  <= 64'b0;
 			is_branch_ex  <= 1'b0;
 			is_jump_ex    <= 1'b0;
 			is_jalr_ex    <= 1'b0;
@@ -276,6 +352,9 @@ module core import common::*;(
 			mem_read_ex   <= mem_read_id;
 			mem_write_ex  <= mem_write_id;
 			reg_write_ex  <= reg_write_id;
+			exception_valid_ex <= inst_valid_id && is_illegal_id;
+			exception_cause_ex <= CAUSE_ILLEGAL_INST;
+			exception_tval_ex  <= 64'b0;
 			is_branch_ex  <= is_branch_id;
 			is_jump_ex    <= is_jump_id;
 			is_jalr_ex    <= is_jalr_id;
@@ -301,20 +380,35 @@ module core import common::*;(
 	);
 
 	assign fetch_wait = ireq.valid && !iresp.data_ok;
-	assign stall = load_use_hazard || fetch_wait || mem_access_mem;
+	assign stall = load_use_hazard || fetch_wait || mem_access_mem || system_wb_waiting;
+
+	always_ff @(posedge clk) begin
+		if (reset) begin
+			fetch_wait_q <= 1'b0;
+			mem_wait_q   <= 1'b0;
+		end else begin
+			fetch_wait_q <= fetch_wait;
+			mem_wait_q   <= mem_wait;
+		end
+	end
 
 	// ========== 6. EX ALU (Phase 3: Forwarding) ==========
 	logic [63:0] rs1_forwarded_ex, rs2_forwarded_ex, alu_in_a_ex, alu_in_b_ex;
 	logic [63:0] forward_data_mem;
 	logic [63:0] alu_result_ex;
+	logic [63:0] redirect_target_raw_ex;
+	logic        control_target_misaligned_ex, mem_misaligned_ex;
+	logic        exception_valid_ex_eff;
+	logic [63:0] exception_cause_ex_eff, exception_tval_ex_eff;
 	logic        branch_taken_ex;
 	logic [63:0] csr_read_data_ex, csr_write_data_ex;
 	logic        csr_write_enable_ex, csr_write_wb_fire;
-	logic [63:0] csr_mstatus, csr_sstatus, csr_mepc, csr_sepc;
+	logic [63:0] csr_mstatus, csr_mstatus_pre_trap, csr_sstatus, csr_mepc, csr_sepc;
 	logic [63:0] csr_mtval, csr_stval, csr_mtvec, csr_stvec;
 	logic [63:0] csr_mcause, csr_scause, csr_satp, csr_mip, csr_mie;
 	logic [63:0] csr_mscratch, csr_sscratch, csr_mideleg, csr_medeleg;
 	logic [63:0] csr_mcycle, csr_mhartid;
+	logic [63:0] csr_mip_irq_q, csr_mie_irq_q;
 
 	core_csr csr_file(
 		.clk       (clk),
@@ -326,12 +420,14 @@ module core import common::*;(
 		.waddr     (csr_addr_wb),
 		.wdata     (csr_write_data_wb),
 		.trap_wen  (csr_trap_wen_wb),
-		.trap_mepc (pc_wb),
+		.trap_mepc (csr_trap_mepc_wb),
 		.trap_mcause (csr_trap_mcause_wb),
+		.trap_mtval (csr_trap_mtval_wb),
 		.trap_prev_priv (priv_mode_q),
 		.mret_wen  (csr_mret_wen_wb),
 		.mret_priv (csr_mret_priv),
 		.mstatus   (csr_mstatus),
+		.mstatus_pre_trap (csr_mstatus_pre_trap),
 		.sstatus   (csr_sstatus),
 		.mepc      (csr_mepc),
 		.sepc      (csr_sepc),
@@ -351,6 +447,16 @@ module core import common::*;(
 		.mcycle    (csr_mcycle),
 		.mhartid   (csr_mhartid)
 	);
+
+	always_ff @(posedge clk) begin
+		if (reset) begin
+			csr_mip_irq_q <= 64'b0;
+			csr_mie_irq_q <= 64'b0;
+		end else begin
+			csr_mip_irq_q <= csr_mip;
+			csr_mie_irq_q <= csr_mie;
+		end
+	end
 
 	core_forwarding_unit forwarding_unit(
 		.rs1_ex         (rs1_ex),
@@ -394,9 +500,22 @@ module core import common::*;(
 		endcase
 	end
 
-	assign redirect_valid_ex = inst_valid_ex && (is_csr_ex || is_jump_ex || (is_branch_ex && branch_taken_ex));
+	assign redirect_target_raw_ex = is_jalr_ex ? (rs1_forwarded_ex + imm_ex) : (pc_ex + imm_ex);
 	assign redirect_target_ex = is_csr_ex ? (pc_ex + 64'd4) :
-		(is_jalr_ex ? ((rs1_forwarded_ex + imm_ex) & ~64'd1) : (pc_ex + imm_ex));
+		(is_jalr_ex ? (redirect_target_raw_ex & ~64'd1) : redirect_target_raw_ex);
+	assign control_target_misaligned_ex = inst_valid_ex &&
+		(is_jump_ex || (is_branch_ex && branch_taken_ex)) && (redirect_target_raw_ex[1:0] != 2'b00);
+	assign mem_misaligned_ex = inst_valid_ex && (mem_read_ex || mem_write_ex) &&
+		mem_addr_misaligned(alu_result_ex, mem_size_from_funct3(funct3_ex));
+	assign exception_valid_ex_eff = exception_valid_ex || control_target_misaligned_ex || mem_misaligned_ex;
+	assign exception_cause_ex_eff = control_target_misaligned_ex ? CAUSE_INST_MISALIGNED :
+		(mem_misaligned_ex ? (mem_read_ex ? CAUSE_LOAD_MISALIGNED : CAUSE_STORE_MISALIGNED) :
+		 exception_cause_ex);
+	assign exception_tval_ex_eff = control_target_misaligned_ex ? redirect_target_raw_ex :
+		(mem_misaligned_ex ? alu_result_ex : exception_tval_ex);
+	assign system_event_ex = inst_valid_ex && (exception_valid_ex_eff || is_ecall_ex || is_mret_ex);
+	assign redirect_valid_ex = inst_valid_ex && !exception_valid_ex_eff &&
+		(is_csr_ex || is_jump_ex || (is_branch_ex && branch_taken_ex));
 	assign redirect_fire_ex = redirect_valid_ex && !fetch_wait && !mem_wait;
 
 	// ========== 7. EX_MEM Reg ==========
@@ -406,6 +525,8 @@ module core import common::*;(
 	logic [4:0]  rd_mem;
 	logic [2:0]  funct3_mem;
 	logic        inst_valid_mem, mem_read_mem, mem_write_mem, reg_write_mem;
+	logic        exception_valid_mem;
+	logic [63:0] exception_cause_mem, exception_tval_mem;
 	logic        is_csr_mem, is_ecall_mem, is_mret_mem, csr_write_enable_mem;
 	csr_op_t     csr_op_mem;
 	csr_addr_t   csr_addr_mem;
@@ -425,6 +546,9 @@ module core import common::*;(
 			mem_read_mem   <= 1'b0;
 			mem_write_mem  <= 1'b0;
 			reg_write_mem  <= 1'b0;
+			exception_valid_mem <= 1'b0;
+			exception_cause_mem <= 64'b0;
+			exception_tval_mem  <= 64'b0;
 			is_csr_mem     <= 1'b0;
 			is_ecall_mem   <= 1'b0;
 			is_mret_mem    <= 1'b0;
@@ -446,6 +570,9 @@ module core import common::*;(
 			mem_read_mem   <= mem_read_ex;
 			mem_write_mem  <= mem_write_ex;
 			reg_write_mem  <= reg_write_ex;
+			exception_valid_mem <= exception_valid_ex_eff;
+			exception_cause_mem <= exception_cause_ex_eff;
+			exception_tval_mem  <= exception_tval_ex_eff;
 			is_csr_mem     <= is_csr_ex;
 			is_ecall_mem   <= is_ecall_ex;
 			is_mret_mem    <= is_mret_ex;
@@ -464,14 +591,15 @@ module core import common::*;(
 	strobe_t     store_strobe_mem;
 	msize_t      mem_size_mem;
 
-	assign mem_access_mem = inst_valid_mem && (mem_read_mem || mem_write_mem);
+	assign mem_access_mem = inst_valid_mem && !exception_valid_mem && (mem_read_mem || mem_write_mem);
 	assign mem_wait = mem_access_mem && !dresp.data_ok;
 	assign mem_size_mem = mem_size_from_funct3(funct3_mem);
 	assign store_strobe_mem = store_strobe_from_funct3(funct3_mem, alu_result_mem[2:0]);
 	assign store_data_aligned_mem = align_store_data(rs2_data_mem, alu_result_mem[2:0]);
 	assign load_data_mem = extend_load_data(dresp.data, alu_result_mem[2:0], funct3_mem);
+	assign system_event_mem = inst_valid_mem && (exception_valid_mem || is_ecall_mem || is_mret_mem);
 
-	assign dreq.valid  = mem_access_mem;
+	assign dreq.valid  = mem_access_mem && !exception_valid_mem;
 	assign dreq.addr   = alu_result_mem;
 	assign dreq.size   = mem_size_mem;
 	assign dreq.strobe = mem_write_mem ? store_strobe_mem : 8'b0;
@@ -483,6 +611,8 @@ module core import common::*;(
 	logic [31:0] instr_wb;
 	logic [2:0]  funct3_wb;
 	logic        inst_valid_wb, mem_read_wb, mem_write_wb, commit_valid_wb, difftest_skip_wb;
+	logic        exception_valid_wb;
+	logic [63:0] exception_cause_wb, exception_tval_wb;
 	logic        is_csr_wb, is_ecall_wb, is_mret_wb, csr_write_enable_wb;
 	csr_op_t     csr_op_wb;
 	csr_addr_t   csr_addr_wb;
@@ -502,6 +632,9 @@ module core import common::*;(
 			mem_read_wb   <= 1'b0;
 			mem_write_wb  <= 1'b0;
 			reg_write_wb  <= 1'b0;
+			exception_valid_wb <= 1'b0;
+			exception_cause_wb <= 64'b0;
+			exception_tval_wb  <= 64'b0;
 			is_csr_wb     <= 1'b0;
 			is_ecall_wb   <= 1'b0;
 			is_mret_wb    <= 1'b0;
@@ -523,6 +656,9 @@ module core import common::*;(
 			mem_read_wb   <= mem_read_mem;
 			mem_write_wb  <= mem_write_mem;
 			reg_write_wb  <= reg_write_mem;
+			exception_valid_wb <= exception_valid_mem;
+			exception_cause_wb <= exception_cause_mem;
+			exception_tval_wb  <= exception_tval_mem;
 			is_csr_wb     <= is_csr_mem;
 			is_ecall_wb   <= is_ecall_mem;
 			is_mret_wb    <= is_mret_mem;
@@ -544,22 +680,61 @@ module core import common::*;(
 	end
 	assign is_trap_wb = inst_valid_wb && (instr_wb == TRAP_INST);
 	assign commit_valid_wb = inst_valid_wb && !wb_fired;
-	assign reg_write_wb_fire = reg_write_wb && commit_valid_wb && (rd_wb != 5'b0);
-	assign csr_write_wb_fire = csr_write_enable_wb && commit_valid_wb;
-	assign ecall_commit_wb = is_ecall_wb && commit_valid_wb;
-	assign mret_commit_wb = is_mret_wb && commit_valid_wb;
-	assign system_redirect_fire_wb = ecall_commit_wb || mret_commit_wb;
+	assign hw_mip = (swint ? MIP_MSIP : 64'b0) |
+		(trint ? MIP_MTIP : 64'b0) |
+		(exint ? MIP_MEIP : 64'b0);
+	assign interrupt_pending_mask_wb = (csr_mip_irq_q | hw_mip) & csr_mie_irq_q &
+		(MIP_MSIP | MIP_MTIP | MIP_MEIP);
+	assign interrupt_pending_wb = interrupt_pending_mask_wb != 64'b0;
+	assign mstatus_mie_effective_wb = mstatus_mie_after_wb(
+		csr_mstatus_pre_trap,
+		commit_valid_wb && csr_write_enable_wb && !exception_valid_wb && !is_ecall_wb && !is_mret_wb,
+		csr_op_wb,
+		csr_addr_wb,
+		csr_write_data_wb
+	);
+	assign interrupt_enabled_wb = (priv_mode_q != PRIV_M) || mstatus_mie_effective_wb;
+	always_comb begin
+		if (interrupt_pending_mask_wb[11])
+			interrupt_cause_wb = CAUSE_IRQ_EXTERNAL;
+		else if (interrupt_pending_mask_wb[7])
+			interrupt_cause_wb = CAUSE_IRQ_TIMER;
+		else
+			interrupt_cause_wb = CAUSE_IRQ_SW;
+	end
+	assign interrupt_request_wb = commit_valid_wb && !exception_valid_wb &&
+		!is_ecall_wb && !is_mret_wb && interrupt_enabled_wb && interrupt_pending_wb;
+	assign system_pending_wb = commit_valid_wb &&
+		(exception_valid_wb || is_ecall_wb || is_mret_wb || interrupt_request_wb);
+	assign system_redirect_ready_wb = !fetch_wait_q && !mem_wait_q;
+	assign system_wb_waiting = system_pending_wb && !system_redirect_ready_wb;
+	assign commit_fire_wb = commit_valid_wb && !system_wb_waiting;
+	assign exception_commit_wb = exception_valid_wb && commit_fire_wb;
+	assign ecall_commit_wb = is_ecall_wb && commit_fire_wb;
+	assign mret_commit_wb = is_mret_wb && commit_fire_wb;
+	assign interrupt_commit_wb = interrupt_request_wb && commit_fire_wb;
+	assign trap_commit_wb = exception_commit_wb || ecall_commit_wb || interrupt_commit_wb;
+	assign system_flush_front = system_event_ex || system_event_mem || system_pending_wb;
+	assign reg_write_wb_fire = reg_write_wb && commit_fire_wb && !exception_commit_wb &&
+		!ecall_commit_wb && !mret_commit_wb && (rd_wb != 5'b0);
+	assign csr_write_wb_fire = csr_write_enable_wb && commit_fire_wb &&
+		!exception_commit_wb && !ecall_commit_wb && !mret_commit_wb;
+	assign system_redirect_fire_wb = trap_commit_wb || mret_commit_wb;
 	assign system_redirect_target_wb = mret_commit_wb ? csr_mepc : csr_mtvec;
-	assign csr_trap_wen_wb = ecall_commit_wb;
+	assign csr_trap_wen_wb = trap_commit_wb;
 	assign csr_mret_wen_wb = mret_commit_wb;
-	assign csr_trap_mcause_wb = (priv_mode_q == PRIV_U) ? 64'd8 : 64'd11;
-	assign priv_mode_view = ecall_commit_wb ? PRIV_M :
+	assign csr_trap_mepc_wb = interrupt_commit_wb ? (pc_wb + 64'd4) : pc_wb;
+	assign csr_trap_mcause_wb = interrupt_commit_wb ? interrupt_cause_wb :
+		(exception_commit_wb ? exception_cause_wb : ecall_cause(priv_mode_q));
+	assign csr_trap_mtval_wb = exception_commit_wb ? exception_tval_wb : 64'b0;
+	assign priv_mode_view = trap_commit_wb ? PRIV_M :
 		(mret_commit_wb ? csr_mret_priv : priv_mode_q);
 	assign priv_mode_o = priv_mode_view;
 	assign satp_o = csr_satp;
-	assign trap_valid_wb = is_trap_wb && commit_valid_wb;
+	assign trap_valid_wb = is_trap_wb && commit_fire_wb;
 	assign trap_code_wb = rf_dbg[10][7:0];
-	assign difftest_skip_wb = (mem_read_wb || mem_write_wb) && (alu_result_wb[31] == 1'b0);
+	assign difftest_skip_wb = ((mem_read_wb || mem_write_wb) && (alu_result_wb[31] == 1'b0)) ||
+		(is_csr_wb && (csr_addr_wb == 12'h3a0 || csr_addr_wb == 12'h3b0));
 
 	always_ff @(posedge clk) begin
 		if (reset) begin
@@ -568,7 +743,7 @@ module core import common::*;(
 			wb_fired <= 1'b0;
 		end else if (!fetch_wait && !mem_wait) begin
 			wb_fired <= 1'b0;
-		end else if (commit_valid_wb) begin
+		end else if (commit_fire_wb) begin
 			wb_fired <= 1'b1;
 		end
 	end
@@ -576,7 +751,7 @@ module core import common::*;(
 	always_ff @(posedge clk) begin
 		if (reset) begin
 			priv_mode_q <= PRIV_M;
-		end else if (ecall_commit_wb) begin
+		end else if (trap_commit_wb) begin
 			priv_mode_q <= PRIV_M;
 		end else if (mret_commit_wb) begin
 			priv_mode_q <= csr_mret_priv;
@@ -589,7 +764,7 @@ module core import common::*;(
 			instr_cnt <= 64'b0;
 		end else begin
 			cycle_cnt <= cycle_cnt + 64'd1;
-			if (commit_valid_wb && !is_trap_wb)
+			if (commit_fire_wb && !is_trap_wb)
 				instr_cnt <= instr_cnt + 64'd1;
 		end
 	end
@@ -612,7 +787,7 @@ module core import common::*;(
 		.clock              (clk),
 		.coreid             (csr_mhartid[7:0]),
 		.index              (8'b0),
-		.valid              (commit_valid_wb),
+		.valid              (commit_fire_wb),
 		.pc                 (pc_wb),
 		.instr              (instr_wb),
 		.skip               (difftest_skip_wb),

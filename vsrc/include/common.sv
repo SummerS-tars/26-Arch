@@ -263,6 +263,7 @@ typedef struct packed {
     logic    is_csr;
     logic    is_ecall;
     logic    is_mret;
+    logic    is_illegal;
     csr_op_t csr_op;
     csr_addr_t csr_addr;
     logic    csr_uses_imm;
