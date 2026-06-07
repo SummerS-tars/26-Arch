@@ -15,14 +15,10 @@ module core_trap_ctrl import common::*; import trap_pkg::*; (
 	input  logic [63:0] exception_tval_wb,
 	input  logic        is_ecall_wb,
 	input  logic        is_mret_wb,
-	input  logic        mem_read_wb,
-	input  logic        mem_write_wb,
-	input  logic        is_csr_wb,
-	input  csr_addr_t   csr_addr_wb,
 	input  logic        csr_write_enable_wb,
 	input  csr_op_t     csr_op_wb,
+	input  csr_addr_t   csr_addr_wb,
 	input  logic [63:0] csr_write_data_wb,
-	input  logic [63:0] alu_result_wb,
 	input  logic        reg_write_wb,
 	input  logic [4:0]  rd_wb,
 	input  logic        wb_fired,
@@ -56,8 +52,7 @@ module core_trap_ctrl import common::*; import trap_pkg::*; (
 	output logic [63:0] csr_trap_mtval_wb,
 	output priv_mode_t  priv_mode_view,
 	output logic        trap_valid_wb,
-	output logic [7:0]  trap_code_wb,
-	output logic        difftest_skip_wb
+	output logic [7:0]  trap_code_wb
 );
 	logic        is_trap_wb;
 	logic [63:0] hw_mip, interrupt_pending_mask_wb, interrupt_cause_wb;
@@ -119,8 +114,6 @@ module core_trap_ctrl import common::*; import trap_pkg::*; (
 		(mret_commit_wb ? csr_mret_priv : priv_mode_q);
 	assign trap_valid_wb = is_trap_wb && commit_fire_wb;
 	assign trap_code_wb = trap_code_in;
-	assign difftest_skip_wb = ((mem_read_wb || mem_write_wb) && (alu_result_wb[31] == 1'b0)) ||
-		(is_csr_wb && (csr_addr_wb == 12'h3a0 || csr_addr_wb == 12'h3b0));
 endmodule
 
 `endif

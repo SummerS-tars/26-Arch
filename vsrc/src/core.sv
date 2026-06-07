@@ -31,7 +31,7 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 	logic        system_event_ex, system_event_mem, system_flush_front;
 	logic        csr_trap_wen_wb, csr_mret_wen_wb;
 	logic [63:0] csr_trap_mepc_wb, csr_trap_mcause_wb, csr_trap_mtval_wb;
-	logic        csr_write_wb_fire, difftest_skip_wb;
+	logic        csr_write_wb_fire;
 	priv_mode_t  priv_mode_q, priv_mode_view, csr_mret_priv;
 
 	id_ex_t  id_ex_q;
@@ -435,14 +435,10 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 		.exception_tval_wb   (mem_wb_q.exception_tval),
 		.is_ecall_wb         (mem_wb_q.is_ecall),
 		.is_mret_wb          (mem_wb_q.is_mret),
-		.mem_read_wb         (mem_wb_q.mem_read),
-		.mem_write_wb        (mem_wb_q.mem_write),
-		.is_csr_wb           (mem_wb_q.is_csr),
-		.csr_addr_wb         (mem_wb_q.csr_addr),
 		.csr_write_enable_wb (mem_wb_q.csr_write_enable),
 		.csr_op_wb           (mem_wb_q.csr_op),
+		.csr_addr_wb         (mem_wb_q.csr_addr),
 		.csr_write_data_wb   (mem_wb_q.csr_write_data),
-		.alu_result_wb       (mem_wb_q.alu_result),
 		.reg_write_wb        (mem_wb_q.reg_write),
 		.rd_wb               (mem_wb_q.rd),
 		.wb_fired            (wb_fired),
@@ -476,8 +472,7 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 		.csr_trap_mtval_wb   (csr_trap_mtval_wb),
 		.priv_mode_view      (priv_mode_view),
 		.trap_valid_wb       (trap_valid_wb),
-		.trap_code_wb        (trap_code_wb),
-		.difftest_skip_wb    (difftest_skip_wb)
+		.trap_code_wb        (trap_code_wb)
 	);
 
 	assign priv_mode_o = priv_mode_view;
@@ -517,103 +512,44 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 		end
 	end
 
-	// ========== Difftest: gpr with bypass ==========
-	logic [63:0] gpr_dt [32];
-	always_comb begin
-		for (int i = 0; i < 32; i++) begin
-			if (i == 0)
-				gpr_dt[i] = 64'b0;
-			else if (reg_write_wb_fire && mem_wb_q.rd == i[4:0])
-				gpr_dt[i] = wb_data;
-			else
-				gpr_dt[i] = rf_dbg[i];
-		end
-	end
-
 `ifdef VERILATOR
-	DifftestInstrCommit DifftestInstrCommit(
-		.clock              (clk),
-		.coreid             (csr_mhartid[7:0]),
-		.index              (8'b0),
-		.valid              (commit_fire_wb),
-		.pc                 (mem_wb_q.pc),
-		.instr              (mem_wb_q.instr),
-		.skip               (difftest_skip_wb),
-		.isRVC              (1'b0),
-		.scFailed           (1'b0),
-		.wen                (reg_write_wb_fire),
-		.wdest              ({3'b0, mem_wb_q.rd}),
-		.wdata              (wb_data)
-	);
-
-	DifftestArchIntRegState DifftestArchIntRegState (
-		.clock              (clk),
-		.coreid             (csr_mhartid[7:0]),
-		.gpr_0              (gpr_dt[0]),
-		.gpr_1              (gpr_dt[1]),
-		.gpr_2              (gpr_dt[2]),
-		.gpr_3              (gpr_dt[3]),
-		.gpr_4              (gpr_dt[4]),
-		.gpr_5              (gpr_dt[5]),
-		.gpr_6              (gpr_dt[6]),
-		.gpr_7              (gpr_dt[7]),
-		.gpr_8              (gpr_dt[8]),
-		.gpr_9              (gpr_dt[9]),
-		.gpr_10             (gpr_dt[10]),
-		.gpr_11             (gpr_dt[11]),
-		.gpr_12             (gpr_dt[12]),
-		.gpr_13             (gpr_dt[13]),
-		.gpr_14             (gpr_dt[14]),
-		.gpr_15             (gpr_dt[15]),
-		.gpr_16             (gpr_dt[16]),
-		.gpr_17             (gpr_dt[17]),
-		.gpr_18             (gpr_dt[18]),
-		.gpr_19             (gpr_dt[19]),
-		.gpr_20             (gpr_dt[20]),
-		.gpr_21             (gpr_dt[21]),
-		.gpr_22             (gpr_dt[22]),
-		.gpr_23             (gpr_dt[23]),
-		.gpr_24             (gpr_dt[24]),
-		.gpr_25             (gpr_dt[25]),
-		.gpr_26             (gpr_dt[26]),
-		.gpr_27             (gpr_dt[27]),
-		.gpr_28             (gpr_dt[28]),
-		.gpr_29             (gpr_dt[29]),
-		.gpr_30             (gpr_dt[30]),
-		.gpr_31             (gpr_dt[31])
-	);
-
-    DifftestTrapEvent DifftestTrapEvent(
-		.clock              (clk),
-		.coreid             (csr_mhartid[7:0]),
-		.valid              (trap_valid_wb),
-		.code               (trap_code_wb[2:0]),
-		.pc                 (mem_wb_q.pc),
-		.cycleCnt           (cycle_cnt),
-		.instrCnt           (instr_cnt)
-	);
-
-	DifftestCSRState DifftestCSRState(
-		.clock              (clk),
-		.coreid             (csr_mhartid[7:0]),
-		.priviledgeMode     (priv_mode_view),
-		.mstatus            (csr_mstatus),
-		.sstatus            (csr_sstatus),
-		.mepc               (csr_mepc),
-		.sepc               (csr_sepc),
-		.mtval              (csr_mtval),
-		.stval              (csr_stval),
-		.mtvec              (csr_mtvec),
-		.stvec              (csr_stvec),
-		.mcause             (csr_mcause),
-		.scause             (csr_scause),
-		.satp               (csr_satp),
-		.mip                (csr_mip),
-		.mie                (csr_mie),
-		.mscratch           (csr_mscratch),
-		.sscratch           (csr_sscratch),
-		.mideleg            (csr_mideleg),
-		.medeleg            (csr_medeleg)
+	core_difftest_adapter difftest_adapter(
+		.clk            (clk),
+		.coreid         (csr_mhartid[7:0]),
+		.commit_valid   (commit_fire_wb),
+		.pc             (mem_wb_q.pc),
+		.instr          (mem_wb_q.instr),
+		.reg_write_fire (reg_write_wb_fire),
+		.rd             (mem_wb_q.rd),
+		.wb_data        (wb_data),
+		.mem_read_wb    (mem_wb_q.mem_read),
+		.mem_write_wb   (mem_wb_q.mem_write),
+		.alu_result_wb  (mem_wb_q.alu_result),
+		.is_csr_wb      (mem_wb_q.is_csr),
+		.csr_addr_wb    (mem_wb_q.csr_addr),
+		.trap_valid     (trap_valid_wb),
+		.trap_code      (trap_code_wb[2:0]),
+		.cycle_cnt      (cycle_cnt),
+		.instr_cnt      (instr_cnt),
+		.priv_mode      (priv_mode_view),
+		.gpr_dbg        (rf_dbg),
+		.mstatus        (csr_mstatus),
+		.sstatus        (csr_sstatus),
+		.mepc           (csr_mepc),
+		.sepc           (csr_sepc),
+		.mtval          (csr_mtval),
+		.stval          (csr_stval),
+		.mtvec          (csr_mtvec),
+		.stvec          (csr_stvec),
+		.mcause         (csr_mcause),
+		.scause         (csr_scause),
+		.satp           (csr_satp),
+		.mip            (csr_mip),
+		.mie            (csr_mie),
+		.mscratch       (csr_mscratch),
+		.sscratch       (csr_sscratch),
+		.mideleg        (csr_mideleg),
+		.medeleg        (csr_medeleg)
 	);
 `endif
 endmodule
