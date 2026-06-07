@@ -54,12 +54,14 @@ module core_csr
     localparam u64 SIP_MASK = 64'h222;
     localparam u64 SSTATUS_WRITABLE_MASK = SSTATUS_MASK & MSTATUS_MASK;
 
+    // ----- registered CSR state -----
     u64 mstatus_q, mepc_q, sepc_q, mtval_q, stval_q;
     u64 mtvec_q, stvec_q, mcause_q, scause_q, satp_q;
     u64 mip_q, mie_q, mscratch_q, sscratch_q;
     u64 mideleg_q, medeleg_q, mcycle_q;
     u64 pmpaddr0_q, pmpcfg0_q;
 
+    // ----- trap / mret state update helpers -----
     function automatic u64 mstatus_on_trap(
         input u64 status,
         input priv_mode_t prev_priv
@@ -106,6 +108,7 @@ module core_csr
         end
     endfunction
 
+    // ----- CSR read decode -----
     function automatic u64 csr_value(input csr_addr_t addr);
         begin
             case (addr)
@@ -137,6 +140,7 @@ module core_csr
         end
     endfunction
 
+    // ----- CSR write decode -----
     u64 write_old, write_next;
 
     assign write_old = csr_value(waddr);
@@ -151,6 +155,11 @@ module core_csr
 
     assign rdata = csr_value(raddr);
 
+    // ----- write / trap / mret combinational view -----
+    // mip/mie outputs reflect the post-write or post-trap view for Difftest.
+    // core samples csr_mip_irq_q from the registered mip_q one cycle earlier for
+    // interrupt pending arbitration, keeping hardware pending separate from the
+    // architecturally visible value exported here.
     u64 mstatus_view, mepc_view, sepc_view, mtval_view, stval_view;
     u64 mtvec_view, stvec_view, mcause_view, scause_view, satp_view;
     u64 mip_view, mie_view, mscratch_view, sscratch_view;
@@ -217,6 +226,7 @@ module core_csr
         end
     end
 
+    // ----- registered CSR update -----
     always_ff @(posedge clk) begin
         if (reset) begin
             mstatus_q  <= 64'b0;
@@ -284,6 +294,7 @@ module core_csr
         end
     end
 
+    // ----- architectural outputs -----
     assign mret_priv = priv_mode_t'(mstatus_q[12:11]);
     assign mstatus  = mstatus_view;
     assign mstatus_pre_trap = mstatus_q;
