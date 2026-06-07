@@ -33,6 +33,9 @@ module MMU
     u64 pte_addr_q;
     logic [1:0] level_q;
     u64 translated_addr_q;
+    u64 satp_ctx_q;
+    priv_mode_t priv_mode_ctx_q;
+    logic context_change;
 
     logic translate_en;
     logic pte_done;
@@ -75,6 +78,7 @@ module MMU
     assign next_pte_addr = ({8'b0, pte_data[53:10], 12'b0}) +
         (vpn_index(vaddr_q, level_q - 2'd1) << 3);
     assign leaf_paddr = leaf_addr(pte_data, vaddr_q, level_q);
+    assign context_change = (satp != satp_ctx_q) || (priv_mode != priv_mode_ctx_q);
 
     always_comb begin
         walk_req          = '0;
@@ -126,48 +130,58 @@ module MMU
             pte_addr_q        <= 64'b0;
             level_q           <= 2'd0;
             translated_addr_q <= 64'b0;
+            satp_ctx_q        <= 64'b0;
+            priv_mode_ctx_q   <= PRIV_M;
         end else begin
-            case (state_q)
-                STATE_IDLE: begin
-                    if (ireq.valid && translate_en) begin
-                        saved_req_q <= ireq;
-                        vaddr_q     <= ireq.addr;
-                        level_q     <= 2'd2;
-                        pte_addr_q  <= ({8'b0, satp[43:0], 12'b0}) +
-                            (vpn_index(ireq.addr, 2'd2) << 3);
-                        state_q     <= STATE_WALK;
-                        resume_state_q <= STATE_IDLE;
-                    end
-                end
-                STATE_WALK: begin
-                    if (pte_done) begin
-                        if (!pte_data[0]) begin
-                            translated_addr_q <= vaddr_q;
-                            resume_state_q    <= STATE_ISSUE;
-                            state_q           <= STATE_WAIT_CLEAR;
-                        end else if (leaf_pte || level_q == 2'd0) begin
-                            translated_addr_q <= leaf_paddr;
-                            resume_state_q    <= STATE_ISSUE;
-                            state_q           <= STATE_WAIT_CLEAR;
-                        end else begin
-                            level_q    <= level_q - 2'd1;
-                            pte_addr_q <= next_pte_addr;
-                            resume_state_q <= STATE_WALK;
-                            state_q    <= STATE_WAIT_CLEAR;
+            satp_ctx_q      <= satp;
+            priv_mode_ctx_q <= priv_mode;
+
+            if (context_change && state_q != STATE_IDLE) begin
+                state_q        <= STATE_IDLE;
+                resume_state_q <= STATE_IDLE;
+            end else begin
+                case (state_q)
+                    STATE_IDLE: begin
+                        if (ireq.valid && translate_en) begin
+                            saved_req_q <= ireq;
+                            vaddr_q     <= ireq.addr;
+                            level_q     <= 2'd2;
+                            pte_addr_q  <= ({8'b0, satp[43:0], 12'b0}) +
+                                (vpn_index(ireq.addr, 2'd2) << 3);
+                            state_q     <= STATE_WALK;
+                            resume_state_q <= STATE_IDLE;
                         end
                     end
-                end
-                STATE_ISSUE: begin
-                    if (resp_done) begin
-                        resume_state_q <= STATE_IDLE;
-                        state_q        <= STATE_WAIT_CLEAR;
+                    STATE_WALK: begin
+                        if (pte_done) begin
+                            if (!pte_data[0]) begin
+                                translated_addr_q <= vaddr_q;
+                                resume_state_q    <= STATE_ISSUE;
+                                state_q           <= STATE_WAIT_CLEAR;
+                            end else if (leaf_pte || level_q == 2'd0) begin
+                                translated_addr_q <= leaf_paddr;
+                                resume_state_q    <= STATE_ISSUE;
+                                state_q           <= STATE_WAIT_CLEAR;
+                            end else begin
+                                level_q    <= level_q - 2'd1;
+                                pte_addr_q <= next_pte_addr;
+                                resume_state_q <= STATE_WALK;
+                                state_q    <= STATE_WAIT_CLEAR;
+                            end
+                        end
                     end
-                end
-                STATE_WAIT_CLEAR: begin
-                    state_q <= resume_state_q;
-                end
-                default: state_q <= STATE_IDLE;
-            endcase
+                    STATE_ISSUE: begin
+                        if (resp_done) begin
+                            resume_state_q <= STATE_IDLE;
+                            state_q        <= STATE_WAIT_CLEAR;
+                        end
+                    end
+                    STATE_WAIT_CLEAR: begin
+                        state_q <= resume_state_q;
+                    end
+                    default: state_q <= STATE_IDLE;
+                endcase
+            end
         end
     end
 endmodule
