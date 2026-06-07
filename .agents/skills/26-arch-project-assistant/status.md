@@ -8,70 +8,51 @@ Update it whenever the current implementation stage or verified support boundary
 ## Last checked
 
 - Date: 2026-06-08
-- Method: code inspection + Lab6 simulation + Lab4/Lab5 regression
+- Method: Refactor_TODO steps 1–7 + incremental commits + Lab4/Lab5/Lab6 regression
 
 ## Current project understanding
 
 - Staged Fudan 26-Arch CPU project: simulation + Difftest + `ready-to-run/` tests + Vivado/board path.
 - Main student RTL lives under `vsrc/src/`; framework under `difftest/`, `vsrc/util/`.
-- Active course milestone: **Lab 6** implemented and simulation-validated. Lab5 privilege trap + Sv39 MMU has passed simulation and board UART validation.
+- Active milestone: **Refactor_TODO 1–7 complete** on `refactor/before_labplus`; ready to start lab+ feature work.
 
 ## Current implementation snapshot
 
-- Modular **five-stage pipeline** in `vsrc/src/` (`core.sv` + decode/ALU/regfile/forwarding/hazard/CSR).
-- **Lab 1–6 baseline** in place:
-  - integer ALU, branch/jump, load/store with alignment and sign/zero extension
-  - CSR file (`core_csr.sv`) and Zicsr in `core_decode.sv`; CSR writes flush to `pc+4`
-  - `ECALL` / `MRET` decode and WB-boundary trap/mret redirect with dynamic privilege mode
-  - Lab6 exception packet propagation for illegal instruction, instruction misalignment, load/store misalignment, and `ecall`
-  - Lab6 machine interrupt handling for software, timer, and external interrupt pending lines
-  - `SimTop`/`VTop`: `IBusToCBus` + `DBusToCBus` + `CBusArbiter` + unified CBus `MMU`
-  - Difftest commit, GPR, CSR, trap-event hooks
-- Lab 5 test image in this workspace is locally restored from `kernel.coe` to `kernel.bin`, padded through BSS, and patched for Difftest PMP / PTE A-D compatibility.
-- Lab 6 test assets are present:
-  - `ready-to-run/lab6/lab6-test.bin`
-  - `ready-to-run/lab6/lab6-test.S`
-  - `Makefile` target `test-lab6` runs `./build/emu --no-diff -i ./ready-to-run/lab6/lab6-test.bin`
+- Modular **five-stage pipeline**:
+  - `core.sv` (~560 lines) — pipeline orchestration
+  - `core_trap_ctrl.sv` — WB trap/interrupt/ecall/mret
+  - `core_difftest_adapter.sv` — Difftest hooks + skip rules
+  - `core_decode.sv`, `core_alu.sv`, `core_regfile.sv`, `core_forwarding_unit.sv`, `core_hazard_unit.sv`, `core_csr.sv`
+- Shared packages: `trap_pkg`, `mem_helpers_pkg`, pipeline packets in `common.sv`
+- Bus path: `IBusToCBus` + `DBusToCBus` + `CBusArbiter` + `MMU` (MMU flushes walk on satp/priv change)
+- Lab 1–6 behavior preserved after refactor
 
 ## Current validation snapshot
 
 | Target | Result |
 |--------|--------|
-| `make test-lab1` | pass — `HIT GOOD TRAP` |
-| `make test-lab1-extra` | fail — `ABORT` early |
-| `make test-lab2` | pass |
-| `make test-lab3` | pass |
-| `make test-lab4` | pass |
-| `make test-lab5` | pass — prints `Return from init! Test passed` (then hangs as expected) |
-| `make test-lab6` / direct Lab6 emu run | pass — prints `Privileged test finished.` and `Exit with code = 0` |
+| `make test-lab4` | pass — post-refactor verified |
+| `make test-lab5` | pass — `Return from init! Test passed` |
+| `make test-lab6` | pass — `Privileged test finished.` / `Exit with code = 0` |
+| `test-labplus-2/3/4` | not run yet — next lab+ baseline |
 
-Lab 5 board UART output has been reported successful after synchronizing `kernel.coe` and adding an MMU response-separation state for board BRAM timing.
+## Refactor boundary (completed)
 
-## High-level support boundary
+Steps 1–7 from `Doc/Refactor_TODO.md` are done on branch `refactor/before_labplus`:
 
-Supported (validated):
-
-- base `Lab1` integer subset
-- `Lab2` load/store path
-- `Lab3` control-flow / broader integer programs
-- `Lab4` CSR read/write + Difftest CSR visibility
-- `Lab5` `ECALL`/`MRET`, dynamic U/M privilege state, Sv39 MMU on unified CBus path, board UART validation
-- `Lab6` precise exceptions and machine software/timer/external interrupt handling in simulation
-
-Not supported (validated or evident from code):
-
-- `lab1-extra` (stronger / M-extension-heavy boundary)
-- Lab6 Bonus page-fault exception is not implemented.
-
-## Main current gaps
-
-1. Keep Lab6 report and handin assets synchronized with the final RTL.
-2. If board validation is later required, re-check the unified CBus/MMU timing path separately from Lab6 simulation.
+1. `trap_pkg` constants
+2. `mem_helpers_pkg`
+3. pipeline packets (`id_ex_t` / `ex_mem_t` / `mem_wb_t`)
+4. `core_trap_ctrl.sv`
+5. `core_difftest_adapter.sv`
+6. `core_csr.sv` section cleanup + mip/mie comment
+7. MMU context flush; IBus/CBus timing notes (no behavior change that breaks Lab5)
 
 ## Likely next direction
 
-1. Package handin assets with `make handin` when ready.
-2. Preserve Lab4/Lab5 regression checks when changing CSR/trap behavior.
+1. Run `test-labplus-2/3/4` to record failure baseline.
+2. Implement lab+ in `core_trap_ctrl.sv` / `core_csr.sv` on separate commits.
+3. Revisit IBus addr latch / CBus `saved_req` hold after lab+ with board regression if needed.
 
 ## Update rule
 
