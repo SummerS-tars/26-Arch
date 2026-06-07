@@ -28,11 +28,6 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 	logic        system_redirect_fire_wb;
 	logic [63:0] system_redirect_target_wb;
 	logic        commit_fire_wb, commit_valid_wb;
-	logic        ecall_commit_wb, mret_commit_wb, exception_commit_wb, interrupt_commit_wb;
-	logic        trap_commit_wb, system_pending_wb, system_redirect_ready_wb;
-	logic [63:0] hw_mip, interrupt_pending_mask_wb, interrupt_cause_wb;
-	logic        interrupt_enabled_wb, interrupt_pending_wb, mstatus_mie_effective_wb;
-	logic        interrupt_request_wb;
 	logic        system_event_ex, system_event_mem, system_flush_front;
 	logic        csr_trap_wen_wb, csr_mret_wen_wb;
 	logic [63:0] csr_trap_mepc_wb, csr_trap_mcause_wb, csr_trap_mtval_wb;
@@ -431,65 +426,63 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 		endcase
 	end
 
-	assign is_trap_wb = mem_wb_q.inst_valid && (mem_wb_q.instr == TRAP_INST);
-	assign commit_valid_wb = mem_wb_q.inst_valid && !wb_fired;
-	assign hw_mip = (swint ? MIP_MSIP : 64'b0) |
-		(trint ? MIP_MTIP : 64'b0) |
-		(exint ? MIP_MEIP : 64'b0);
-	assign interrupt_pending_mask_wb = (csr_mip_irq_q | hw_mip) & csr_mie_irq_q &
-		(MIP_MSIP | MIP_MTIP | MIP_MEIP);
-	assign interrupt_pending_wb = interrupt_pending_mask_wb != 64'b0;
-	assign mstatus_mie_effective_wb = mstatus_mie_after_wb(
-		csr_mstatus_pre_trap,
-		commit_valid_wb && mem_wb_q.csr_write_enable && !mem_wb_q.exception_valid &&
-			!mem_wb_q.is_ecall && !mem_wb_q.is_mret,
-		mem_wb_q.csr_op,
-		mem_wb_q.csr_addr,
-		mem_wb_q.csr_write_data
+	core_trap_ctrl trap_ctrl(
+		.inst_valid_wb       (mem_wb_q.inst_valid),
+		.pc_wb               (mem_wb_q.pc),
+		.instr_wb            (mem_wb_q.instr),
+		.exception_valid_wb  (mem_wb_q.exception_valid),
+		.exception_cause_wb  (mem_wb_q.exception_cause),
+		.exception_tval_wb   (mem_wb_q.exception_tval),
+		.is_ecall_wb         (mem_wb_q.is_ecall),
+		.is_mret_wb          (mem_wb_q.is_mret),
+		.mem_read_wb         (mem_wb_q.mem_read),
+		.mem_write_wb        (mem_wb_q.mem_write),
+		.is_csr_wb           (mem_wb_q.is_csr),
+		.csr_addr_wb         (mem_wb_q.csr_addr),
+		.csr_write_enable_wb (mem_wb_q.csr_write_enable),
+		.csr_op_wb           (mem_wb_q.csr_op),
+		.csr_write_data_wb   (mem_wb_q.csr_write_data),
+		.alu_result_wb       (mem_wb_q.alu_result),
+		.reg_write_wb        (mem_wb_q.reg_write),
+		.rd_wb               (mem_wb_q.rd),
+		.wb_fired            (wb_fired),
+		.priv_mode_q         (priv_mode_q),
+		.csr_mstatus_pre_trap (csr_mstatus_pre_trap),
+		.csr_mie_irq_q       (csr_mie_irq_q),
+		.csr_mip_irq_q       (csr_mip_irq_q),
+		.csr_mepc            (csr_mepc),
+		.csr_mtvec           (csr_mtvec),
+		.csr_mret_priv       (csr_mret_priv),
+		.swint               (swint),
+		.trint               (trint),
+		.exint               (exint),
+		.fetch_wait_q        (fetch_wait_q),
+		.mem_wait_q          (mem_wait_q),
+		.system_event_ex     (system_event_ex),
+		.system_event_mem    (system_event_mem),
+		.trap_code_in        (rf_dbg[10][7:0]),
+		.commit_valid_wb     (commit_valid_wb),
+		.commit_fire_wb      (commit_fire_wb),
+		.reg_write_wb_fire   (reg_write_wb_fire),
+		.csr_write_wb_fire   (csr_write_wb_fire),
+		.system_wb_waiting   (system_wb_waiting),
+		.system_flush_front  (system_flush_front),
+		.system_redirect_fire_wb (system_redirect_fire_wb),
+		.system_redirect_target_wb (system_redirect_target_wb),
+		.csr_trap_wen_wb     (csr_trap_wen_wb),
+		.csr_mret_wen_wb     (csr_mret_wen_wb),
+		.csr_trap_mepc_wb    (csr_trap_mepc_wb),
+		.csr_trap_mcause_wb  (csr_trap_mcause_wb),
+		.csr_trap_mtval_wb   (csr_trap_mtval_wb),
+		.priv_mode_view      (priv_mode_view),
+		.trap_valid_wb       (trap_valid_wb),
+		.trap_code_wb        (trap_code_wb),
+		.difftest_skip_wb    (difftest_skip_wb)
 	);
-	assign interrupt_enabled_wb = (priv_mode_q != PRIV_M) || mstatus_mie_effective_wb;
-	always_comb begin
-		if (interrupt_pending_mask_wb[11])
-			interrupt_cause_wb = CAUSE_IRQ_EXTERNAL;
-		else if (interrupt_pending_mask_wb[7])
-			interrupt_cause_wb = CAUSE_IRQ_TIMER;
-		else
-			interrupt_cause_wb = CAUSE_IRQ_SW;
-	end
-	assign interrupt_request_wb = commit_valid_wb && !mem_wb_q.exception_valid &&
-		!mem_wb_q.is_ecall && !mem_wb_q.is_mret && interrupt_enabled_wb && interrupt_pending_wb;
-	assign system_pending_wb = commit_valid_wb &&
-		(mem_wb_q.exception_valid || mem_wb_q.is_ecall || mem_wb_q.is_mret || interrupt_request_wb);
-	assign system_redirect_ready_wb = !fetch_wait_q && !mem_wait_q;
-	assign system_wb_waiting = system_pending_wb && !system_redirect_ready_wb;
-	assign commit_fire_wb = commit_valid_wb && !system_wb_waiting;
-	assign exception_commit_wb = mem_wb_q.exception_valid && commit_fire_wb;
-	assign ecall_commit_wb = mem_wb_q.is_ecall && commit_fire_wb;
-	assign mret_commit_wb = mem_wb_q.is_mret && commit_fire_wb;
-	assign interrupt_commit_wb = interrupt_request_wb && commit_fire_wb;
-	assign trap_commit_wb = exception_commit_wb || ecall_commit_wb || interrupt_commit_wb;
-	assign system_flush_front = system_event_ex || system_event_mem || system_pending_wb;
-	assign reg_write_wb_fire = mem_wb_q.reg_write && commit_fire_wb && !exception_commit_wb &&
-		!ecall_commit_wb && !mret_commit_wb && (mem_wb_q.rd != 5'b0);
-	assign csr_write_wb_fire = mem_wb_q.csr_write_enable && commit_fire_wb &&
-		!exception_commit_wb && !ecall_commit_wb && !mret_commit_wb;
-	assign system_redirect_fire_wb = trap_commit_wb || mret_commit_wb;
-	assign system_redirect_target_wb = mret_commit_wb ? csr_mepc : csr_mtvec;
-	assign csr_trap_wen_wb = trap_commit_wb;
-	assign csr_mret_wen_wb = mret_commit_wb;
-	assign csr_trap_mepc_wb = interrupt_commit_wb ? (mem_wb_q.pc + 64'd4) : mem_wb_q.pc;
-	assign csr_trap_mcause_wb = interrupt_commit_wb ? interrupt_cause_wb :
-		(exception_commit_wb ? mem_wb_q.exception_cause : ecall_cause(priv_mode_q));
-	assign csr_trap_mtval_wb = exception_commit_wb ? mem_wb_q.exception_tval : 64'b0;
-	assign priv_mode_view = trap_commit_wb ? PRIV_M :
-		(mret_commit_wb ? csr_mret_priv : priv_mode_q);
+
 	assign priv_mode_o = priv_mode_view;
 	assign satp_o = csr_satp;
-	assign trap_valid_wb = is_trap_wb && commit_fire_wb;
-	assign trap_code_wb = rf_dbg[10][7:0];
-	assign difftest_skip_wb = ((mem_wb_q.mem_read || mem_wb_q.mem_write) &&
-			(mem_wb_q.alu_result[31] == 1'b0)) ||
-		(mem_wb_q.is_csr && (mem_wb_q.csr_addr == 12'h3a0 || mem_wb_q.csr_addr == 12'h3b0));
+	assign is_trap_wb = mem_wb_q.inst_valid && (mem_wb_q.instr == TRAP_INST);
 
 	always_ff @(posedge clk) begin
 		if (reset) begin
@@ -506,9 +499,9 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 	always_ff @(posedge clk) begin
 		if (reset) begin
 			priv_mode_q <= PRIV_M;
-		end else if (trap_commit_wb) begin
+		end else if (csr_trap_wen_wb) begin
 			priv_mode_q <= PRIV_M;
-		end else if (mret_commit_wb) begin
+		end else if (csr_mret_wen_wb) begin
 			priv_mode_q <= csr_mret_priv;
 		end
 	end
