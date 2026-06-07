@@ -50,7 +50,10 @@ module SimTop import common::*;(
       .priv_mode_o(core_priv_mode), .satp_o(core_satp)
     );
 
-    IBusToCBus icvt(.*);
+    IBusToCBus icvt(
+        .clk(clock), .reset(reset),
+        .ireq(ireq), .iresp(iresp), .icreq(icreq), .icresp(icresp)
+    );
     DBusToCBus dcvt(.*);
     CBusArbiter mux(
         .clk(clock), .reset,

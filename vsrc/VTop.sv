@@ -35,7 +35,10 @@ module VTop
     u64         satp_o;
 
     core core(.*);
-    IBusToCBus icvt(.*);
+    IBusToCBus icvt(
+        .clk(clk), .reset(reset),
+        .ireq(ireq), .iresp(iresp), .icreq(icreq), .icresp(icresp)
+    );
 
     DBusToCBus dcvt(.*);
 
