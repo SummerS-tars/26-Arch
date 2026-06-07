@@ -28,8 +28,9 @@ module CBusArbiter
     int index, select;
     cbus_req_t saved_req, selected_req;
 
-    // assign oreq = ireqs[index];
-    assign oreq = busy ? ireqs[index] : '0;  // prevent early issue
+    // NOTE: busy cycles currently forward ireqs[index]. saved_req already captures
+    // the accepted beat; switching oreq to saved_req needs more Lab5 regression.
+    assign oreq = busy ? ireqs[index] : '0;
     assign selected_req = ireqs[select];
 
     // select a preferred request
@@ -71,7 +72,6 @@ module CBusArbiter
         {busy, index, saved_req} <= '0;
     end
 
-    `UNUSED_OK({saved_req});
 endmodule
 
 
