@@ -271,6 +271,109 @@ typedef struct packed {
     wb_sel_t wb_sel;
 } decode_out_t;
 
+typedef struct packed {
+    u64        pc;
+    u32        instr;
+    logic      inst_valid;
+    u64        rs1_data;
+    u64        rs2_data;
+    u5         rd;
+    u5         rs1;
+    u5         rs2;
+    u64        imm;
+    u64        csr_zimm;
+    u3         funct3;
+    u7         funct7;
+    alu_op_t   alu_op;
+    logic      alu_src;
+    logic      use_pc;
+    logic      mem_read;
+    logic      mem_write;
+    logic      reg_write;
+    logic      exception_valid;
+    u64        exception_cause;
+    u64        exception_tval;
+    logic      is_branch;
+    logic      is_jump;
+    logic      is_jalr;
+    logic      is_csr;
+    logic      is_ecall;
+    logic      is_mret;
+    csr_op_t   csr_op;
+    csr_addr_t csr_addr;
+    logic      csr_uses_imm;
+    wb_sel_t   wb_sel;
+} id_ex_t;
+
+typedef struct packed {
+    u64        pc;
+    u32        instr;
+    logic      inst_valid;
+    u64        alu_result;
+    u64        rs2_data;
+    u64        csr_read_data;
+    u64        csr_write_data;
+    u5         rd;
+    u3         funct3;
+    logic      mem_read;
+    logic      mem_write;
+    logic      reg_write;
+    logic      exception_valid;
+    u64        exception_cause;
+    u64        exception_tval;
+    logic      is_csr;
+    logic      is_ecall;
+    logic      is_mret;
+    logic      csr_write_enable;
+    csr_op_t   csr_op;
+    csr_addr_t csr_addr;
+    wb_sel_t   wb_sel;
+} ex_mem_t;
+
+typedef struct packed {
+    u64        pc;
+    u32        instr;
+    logic      inst_valid;
+    u64        alu_result;
+    u64        mem_data;
+    u64        csr_read_data;
+    u64        csr_write_data;
+    u5         rd;
+    u3         funct3;
+    logic      mem_read;
+    logic      mem_write;
+    logic      reg_write;
+    logic      exception_valid;
+    u64        exception_cause;
+    u64        exception_tval;
+    logic      is_csr;
+    logic      is_ecall;
+    logic      is_mret;
+    logic      csr_write_enable;
+    csr_op_t   csr_op;
+    csr_addr_t csr_addr;
+    wb_sel_t   wb_sel;
+} mem_wb_t;
+
+function automatic id_ex_t id_ex_bubble();
+    id_ex_bubble = '0;
+    id_ex_bubble.alu_op = ALU_ADD;
+    id_ex_bubble.csr_op = CSR_OP_WRITE;
+    id_ex_bubble.wb_sel = WB_ALU;
+endfunction
+
+function automatic ex_mem_t ex_mem_bubble();
+    ex_mem_bubble = '0;
+    ex_mem_bubble.csr_op = CSR_OP_WRITE;
+    ex_mem_bubble.wb_sel = WB_ALU;
+endfunction
+
+function automatic mem_wb_t mem_wb_bubble();
+    mem_wb_bubble = '0;
+    mem_wb_bubble.csr_op = CSR_OP_WRITE;
+    mem_wb_bubble.wb_sel = WB_ALU;
+endfunction
+
 `define IREQ_TO_DREQ(ireq) \
     {ireq, MSIZE4, 8'b0, 64'b0}
 

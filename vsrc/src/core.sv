@@ -19,8 +19,7 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 );
 	// ========== 1. Register File ==========
 	logic [63:0] wb_data;
-	logic        reg_write_wb, reg_write_wb_fire, wb_fired;
-	logic [4:0]  rd_wb;
+	logic        reg_write_wb_fire, wb_fired;
 	logic [63:0] rs1_data_id_r, rs2_data_id_r;
 	logic [31:0][63:0] rf_dbg;
 	logic [63:0] cycle_cnt, instr_cnt;
@@ -28,15 +27,21 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 	logic [7:0]  trap_code_wb;
 	logic        system_redirect_fire_wb;
 	logic [63:0] system_redirect_target_wb;
+	logic        commit_fire_wb, commit_valid_wb;
 	logic        ecall_commit_wb, mret_commit_wb, exception_commit_wb, interrupt_commit_wb;
-	logic        commit_fire_wb, interrupt_request_wb;
-	logic        trap_commit_wb, system_pending_wb, system_redirect_ready_wb, system_wb_waiting;
+	logic        trap_commit_wb, system_pending_wb, system_redirect_ready_wb;
+	logic [63:0] hw_mip, interrupt_pending_mask_wb, interrupt_cause_wb;
+	logic        interrupt_enabled_wb, interrupt_pending_wb, mstatus_mie_effective_wb;
+	logic        interrupt_request_wb;
 	logic        system_event_ex, system_event_mem, system_flush_front;
 	logic        csr_trap_wen_wb, csr_mret_wen_wb;
 	logic [63:0] csr_trap_mepc_wb, csr_trap_mcause_wb, csr_trap_mtval_wb;
-	logic [63:0] hw_mip, interrupt_pending_mask_wb, interrupt_cause_wb;
-	logic        interrupt_enabled_wb, interrupt_pending_wb, mstatus_mie_effective_wb;
+	logic        csr_write_wb_fire, difftest_skip_wb;
 	priv_mode_t  priv_mode_q, priv_mode_view, csr_mret_priv;
+
+	id_ex_t  id_ex_q;
+	ex_mem_t ex_mem_q;
+	mem_wb_t mem_wb_q;
 
 	// ========== 2. PC & IF ==========
 	logic [63:0] pc, next_pc;
@@ -55,7 +60,6 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 			pc <= next_pc;
 	end
 
-	// Stop issuing ibus requests while a MEM access is occupying the shared bus.
 	assign ireq.valid = ~load_use_hazard && !mem_access_mem;
 	assign ireq.addr  = pc;
 
@@ -66,12 +70,12 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 
 	always_ff @(posedge clk) begin
 		if (reset || system_redirect_fire_wb || redirect_fire_ex) begin
-			pc_id        <= 64'b0;
-			instr_id     <= 32'b0;
+			pc_id         <= 64'b0;
+			instr_id      <= 32'b0;
 			inst_valid_id <= 1'b0;
 		end else if (!stall) begin
-			pc_id        <= pc;
-			instr_id     <= iresp.data;
+			pc_id         <= pc;
+			instr_id      <= iresp.data;
 			inst_valid_id <= iresp.data_ok;
 		end
 	end
@@ -96,16 +100,16 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 		.decode_out (decode_id)
 	);
 
-	assign rd_id       = decode_id.rd;
-	assign rs1_id      = decode_id.rs1;
-	assign rs2_id      = decode_id.rs2;
-	assign funct3_id   = decode_id.funct3;
-	assign funct7_id   = decode_id.funct7;
-	assign imm_id      = decode_id.imm;
-	assign alu_op_id   = decode_id.alu_op;
-	assign alu_src_id  = decode_id.alu_src;
-	assign use_pc_id   = decode_id.use_pc;
-	assign mem_read_id = decode_id.mem_read;
+	assign rd_id        = decode_id.rd;
+	assign rs1_id       = decode_id.rs1;
+	assign rs2_id       = decode_id.rs2;
+	assign funct3_id    = decode_id.funct3;
+	assign funct7_id    = decode_id.funct7;
+	assign imm_id       = decode_id.imm;
+	assign alu_op_id    = decode_id.alu_op;
+	assign alu_src_id   = decode_id.alu_src;
+	assign use_pc_id    = decode_id.use_pc;
+	assign mem_read_id  = decode_id.mem_read;
 	assign mem_write_id = decode_id.mem_write;
 	assign reg_write_id = decode_id.reg_write;
 	assign is_branch_id = decode_id.is_branch;
@@ -125,7 +129,7 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 		.clk      (clk),
 		.reset    (reset),
 		.wen      (reg_write_wb_fire),
-		.waddr    (rd_wb),
+		.waddr    (mem_wb_q.rd),
 		.wdata    (wb_data),
 		.raddr1   (rs1_id),
 		.raddr2   (rs2_id),
@@ -135,123 +139,46 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 	);
 
 	// ========== 5. ID_EX Reg ==========
-	logic [63:0] pc_ex, rs1_data_ex, rs2_data_ex, imm_ex;
-	logic [63:0] csr_zimm_ex;
-	logic [31:0] instr_ex;
-	logic [4:0]  rd_ex, rs1_ex, rs2_ex;
-	logic [2:0]  funct3_ex;
-	logic [6:0]  funct7_ex;
-	alu_op_t     alu_op_ex;
-	logic        alu_src_ex, use_pc_ex, is_branch_ex, is_jump_ex, is_jalr_ex;
-	logic        is_csr_ex, is_ecall_ex, is_mret_ex, csr_uses_imm_ex;
-	csr_op_t     csr_op_ex;
-	csr_addr_t   csr_addr_ex;
-	logic        inst_valid_ex, mem_read_ex, mem_write_ex, reg_write_ex;
-	logic        exception_valid_ex;
-	logic [63:0] exception_cause_ex, exception_tval_ex;
-	wb_sel_t     wb_sel_ex;
-
 	always_ff @(posedge clk) begin
 		if (reset || system_redirect_fire_wb || redirect_fire_ex) begin
-			// Bubble: clear all control signals
-			pc_ex         <= 64'b0;
-			instr_ex      <= 32'b0;
-			inst_valid_ex <= 1'b0;
-			rs1_data_ex   <= 64'b0;
-			rs2_data_ex   <= 64'b0;
-			rd_ex         <= 5'b0;
-			rs1_ex        <= 5'b0;
-			rs2_ex        <= 5'b0;
-			imm_ex        <= 64'b0;
-			csr_zimm_ex   <= 64'b0;
-			funct3_ex     <= 3'b0;
-			funct7_ex     <= 7'b0;
-			alu_op_ex     <= ALU_ADD;
-			alu_src_ex    <= 1'b0;
-			use_pc_ex     <= 1'b0;
-			mem_read_ex   <= 1'b0;
-			mem_write_ex  <= 1'b0;
-			reg_write_ex  <= 1'b0;
-			exception_valid_ex <= 1'b0;
-			exception_cause_ex <= 64'b0;
-			exception_tval_ex  <= 64'b0;
-			is_branch_ex  <= 1'b0;
-			is_jump_ex    <= 1'b0;
-			is_jalr_ex    <= 1'b0;
-			is_csr_ex     <= 1'b0;
-			is_ecall_ex   <= 1'b0;
-			is_mret_ex    <= 1'b0;
-			csr_op_ex     <= CSR_OP_WRITE;
-			csr_addr_ex   <= 12'b0;
-			csr_uses_imm_ex <= 1'b0;
-			wb_sel_ex     <= WB_ALU;
+			id_ex_q <= id_ex_bubble();
 		end else if ((system_event_ex && !fetch_wait && !mem_wait) ||
 			(system_event_mem && !fetch_wait && !mem_wait) ||
 			(load_use_hazard && !mem_wait && !fetch_wait) ||
 			(mem_access_mem && !mem_wait && !fetch_wait)) begin
-			pc_ex         <= 64'b0;
-			instr_ex      <= 32'b0;
-			inst_valid_ex <= 1'b0;
-			rs1_data_ex   <= 64'b0;
-			rs2_data_ex   <= 64'b0;
-			rd_ex         <= 5'b0;
-			rs1_ex        <= 5'b0;
-			rs2_ex        <= 5'b0;
-			imm_ex        <= 64'b0;
-			csr_zimm_ex   <= 64'b0;
-			funct3_ex     <= 3'b0;
-			funct7_ex     <= 7'b0;
-			alu_op_ex     <= ALU_ADD;
-			alu_src_ex    <= 1'b0;
-			use_pc_ex     <= 1'b0;
-			mem_read_ex   <= 1'b0;
-			mem_write_ex  <= 1'b0;
-			reg_write_ex  <= 1'b0;
-			exception_valid_ex <= 1'b0;
-			exception_cause_ex <= 64'b0;
-			exception_tval_ex  <= 64'b0;
-			is_branch_ex  <= 1'b0;
-			is_jump_ex    <= 1'b0;
-			is_jalr_ex    <= 1'b0;
-			is_csr_ex     <= 1'b0;
-			is_ecall_ex   <= 1'b0;
-			is_mret_ex    <= 1'b0;
-			csr_op_ex     <= CSR_OP_WRITE;
-			csr_addr_ex   <= 12'b0;
-			csr_uses_imm_ex <= 1'b0;
-			wb_sel_ex     <= WB_ALU;
+			id_ex_q <= id_ex_bubble();
 		end else if (!stall) begin
-			pc_ex         <= pc_id;
-			instr_ex      <= instr_id;
-			inst_valid_ex <= inst_valid_id;
-			rs1_data_ex   <= rs1_data_id_r;
-			rs2_data_ex   <= rs2_data_id_r;
-			rd_ex         <= rd_id;
-			rs1_ex        <= rs1_id;
-			rs2_ex        <= rs2_id;
-			imm_ex        <= imm_id;
-			csr_zimm_ex   <= csr_zimm_id;
-			funct3_ex     <= funct3_id;
-			funct7_ex     <= funct7_id;
-			alu_op_ex     <= alu_op_id;
-			alu_src_ex    <= alu_src_id;
-			use_pc_ex     <= use_pc_id;
-			mem_read_ex   <= mem_read_id;
-			mem_write_ex  <= mem_write_id;
-			reg_write_ex  <= reg_write_id;
-			exception_valid_ex <= inst_valid_id && is_illegal_id;
-			exception_cause_ex <= CAUSE_ILLEGAL_INST;
-			exception_tval_ex  <= 64'b0;
-			is_branch_ex  <= is_branch_id;
-			is_jump_ex    <= is_jump_id;
-			is_jalr_ex    <= is_jalr_id;
-			is_csr_ex     <= is_csr_id;
-			is_ecall_ex   <= is_ecall_id;
-			is_mret_ex    <= is_mret_id;
-			csr_op_ex     <= csr_op_id;
-			csr_addr_ex   <= csr_addr_id;
-			csr_uses_imm_ex <= csr_uses_imm_id;
-			wb_sel_ex     <= wb_sel_id;
+			id_ex_q.pc              <= pc_id;
+			id_ex_q.instr           <= instr_id;
+			id_ex_q.inst_valid      <= inst_valid_id;
+			id_ex_q.rs1_data        <= rs1_data_id_r;
+			id_ex_q.rs2_data        <= rs2_data_id_r;
+			id_ex_q.rd              <= rd_id;
+			id_ex_q.rs1             <= rs1_id;
+			id_ex_q.rs2             <= rs2_id;
+			id_ex_q.imm             <= imm_id;
+			id_ex_q.csr_zimm        <= csr_zimm_id;
+			id_ex_q.funct3          <= funct3_id;
+			id_ex_q.funct7          <= funct7_id;
+			id_ex_q.alu_op          <= alu_op_id;
+			id_ex_q.alu_src         <= alu_src_id;
+			id_ex_q.use_pc          <= use_pc_id;
+			id_ex_q.mem_read        <= mem_read_id;
+			id_ex_q.mem_write       <= mem_write_id;
+			id_ex_q.reg_write       <= reg_write_id;
+			id_ex_q.exception_valid <= inst_valid_id && is_illegal_id;
+			id_ex_q.exception_cause <= CAUSE_ILLEGAL_INST;
+			id_ex_q.exception_tval  <= 64'b0;
+			id_ex_q.is_branch       <= is_branch_id;
+			id_ex_q.is_jump         <= is_jump_id;
+			id_ex_q.is_jalr         <= is_jalr_id;
+			id_ex_q.is_csr          <= is_csr_id;
+			id_ex_q.is_ecall        <= is_ecall_id;
+			id_ex_q.is_mret         <= is_mret_id;
+			id_ex_q.csr_op          <= csr_op_id;
+			id_ex_q.csr_addr        <= csr_addr_id;
+			id_ex_q.csr_uses_imm    <= csr_uses_imm_id;
+			id_ex_q.wb_sel          <= wb_sel_id;
 		end
 	end
 
@@ -259,8 +186,8 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 	logic load_use_hazard;
 
 	core_hazard_unit hazard_unit(
-		.mem_read_ex     (mem_read_ex),
-		.rd_ex           (rd_ex),
+		.mem_read_ex     (id_ex_q.mem_read),
+		.rd_ex           (id_ex_q.rd),
 		.rs1_id          (rs1_id),
 		.rs2_id          (rs2_id),
 		.load_use_hazard (load_use_hazard)
@@ -289,23 +216,24 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 	logic [63:0] exception_cause_ex_eff, exception_tval_ex_eff;
 	logic        branch_taken_ex;
 	logic [63:0] csr_read_data_ex, csr_write_data_ex;
-	logic        csr_write_enable_ex, csr_write_wb_fire;
+	logic        csr_write_enable_ex;
 	logic [63:0] csr_mstatus, csr_mstatus_pre_trap, csr_sstatus, csr_mepc, csr_sepc;
 	logic [63:0] csr_mtval, csr_stval, csr_mtvec, csr_stvec;
 	logic [63:0] csr_mcause, csr_scause, csr_satp, csr_mip, csr_mie;
 	logic [63:0] csr_mscratch, csr_sscratch, csr_mideleg, csr_medeleg;
 	logic [63:0] csr_mcycle, csr_mhartid;
 	logic [63:0] csr_mip_irq_q, csr_mie_irq_q;
+	logic        system_wb_waiting;
 
 	core_csr csr_file(
 		.clk       (clk),
 		.reset     (reset),
-		.raddr     (csr_addr_ex),
+		.raddr     (id_ex_q.csr_addr),
 		.rdata     (csr_read_data_ex),
 		.wen       (csr_write_wb_fire),
-		.wop       (csr_op_wb),
-		.waddr     (csr_addr_wb),
-		.wdata     (csr_write_data_wb),
+		.wop       (mem_wb_q.csr_op),
+		.waddr     (mem_wb_q.csr_addr),
+		.wdata     (mem_wb_q.csr_write_data),
 		.trap_wen  (csr_trap_wen_wb),
 		.trap_mepc (csr_trap_mepc_wb),
 		.trap_mcause (csr_trap_mcause_wb),
@@ -346,29 +274,29 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 	end
 
 	core_forwarding_unit forwarding_unit(
-		.rs1_ex         (rs1_ex),
-		.rs2_ex         (rs2_ex),
-		.rs1_data_ex    (rs1_data_ex),
-		.rs2_data_ex    (rs2_data_ex),
-		.reg_write_mem  (reg_write_mem),
-		.rd_mem         (rd_mem),
+		.rs1_ex         (id_ex_q.rs1),
+		.rs2_ex         (id_ex_q.rs2),
+		.rs1_data_ex    (id_ex_q.rs1_data),
+		.rs2_data_ex    (id_ex_q.rs2_data),
+		.reg_write_mem  (ex_mem_q.reg_write),
+		.rd_mem         (ex_mem_q.rd),
 		.forward_data_mem (forward_data_mem),
-		.reg_write_wb   (reg_write_wb),
-		.rd_wb          (rd_wb),
+		.reg_write_wb   (mem_wb_q.reg_write),
+		.rd_wb          (mem_wb_q.rd),
 		.wb_data        (wb_data),
 		.op_a_forwarded (rs1_forwarded_ex),
 		.rs2_forwarded  (rs2_forwarded_ex)
 	);
 
-	assign alu_in_a_ex = use_pc_ex ? pc_ex : rs1_forwarded_ex;
-	assign alu_in_b_ex = alu_src_ex ? imm_ex : rs2_forwarded_ex;
-	assign csr_write_data_ex = csr_uses_imm_ex ? csr_zimm_ex : rs1_forwarded_ex;
-	assign csr_write_enable_ex = is_csr_ex &&
-		((csr_op_ex == CSR_OP_WRITE) ||
-		 (csr_uses_imm_ex ? (csr_zimm_ex[4:0] != 5'b0) : (rs1_ex != 5'b0)));
+	assign alu_in_a_ex = id_ex_q.use_pc ? id_ex_q.pc : rs1_forwarded_ex;
+	assign alu_in_b_ex = id_ex_q.alu_src ? id_ex_q.imm : rs2_forwarded_ex;
+	assign csr_write_data_ex = id_ex_q.csr_uses_imm ? id_ex_q.csr_zimm : rs1_forwarded_ex;
+	assign csr_write_enable_ex = id_ex_q.is_csr &&
+		((id_ex_q.csr_op == CSR_OP_WRITE) ||
+		 (id_ex_q.csr_uses_imm ? (id_ex_q.csr_zimm[4:0] != 5'b0) : (id_ex_q.rs1 != 5'b0)));
 
 	core_alu alu(
-		.alu_op (alu_op_ex),
+		.alu_op (id_ex_q.alu_op),
 		.op_a   (alu_in_a_ex),
 		.op_b   (alu_in_b_ex),
 		.result (alu_result_ex)
@@ -376,7 +304,7 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 
 	always_comb begin
 		branch_taken_ex = 1'b0;
-		case (funct3_ex)
+		case (id_ex_q.funct3)
 			3'b000:  branch_taken_ex = (rs1_forwarded_ex == rs2_forwarded_ex);
 			3'b001:  branch_taken_ex = (rs1_forwarded_ex != rs2_forwarded_ex);
 			3'b100:  branch_taken_ex = ($signed(rs1_forwarded_ex) < $signed(rs2_forwarded_ex));
@@ -387,186 +315,124 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 		endcase
 	end
 
-	assign redirect_target_raw_ex = is_jalr_ex ? (rs1_forwarded_ex + imm_ex) : (pc_ex + imm_ex);
-	assign redirect_target_ex = is_csr_ex ? (pc_ex + 64'd4) :
-		(is_jalr_ex ? (redirect_target_raw_ex & ~64'd1) : redirect_target_raw_ex);
-	assign control_target_misaligned_ex = inst_valid_ex &&
-		(is_jump_ex || (is_branch_ex && branch_taken_ex)) && (redirect_target_raw_ex[1:0] != 2'b00);
-	assign mem_misaligned_ex = inst_valid_ex && (mem_read_ex || mem_write_ex) &&
-		mem_addr_misaligned(alu_result_ex, mem_size_from_funct3(funct3_ex));
-	assign exception_valid_ex_eff = exception_valid_ex || control_target_misaligned_ex || mem_misaligned_ex;
+	assign redirect_target_raw_ex = id_ex_q.is_jalr ? (rs1_forwarded_ex + id_ex_q.imm) :
+		(id_ex_q.pc + id_ex_q.imm);
+	assign redirect_target_ex = id_ex_q.is_csr ? (id_ex_q.pc + 64'd4) :
+		(id_ex_q.is_jalr ? (redirect_target_raw_ex & ~64'd1) : redirect_target_raw_ex);
+	assign control_target_misaligned_ex = id_ex_q.inst_valid &&
+		(id_ex_q.is_jump || (id_ex_q.is_branch && branch_taken_ex)) &&
+		(redirect_target_raw_ex[1:0] != 2'b00);
+	assign mem_misaligned_ex = id_ex_q.inst_valid && (id_ex_q.mem_read || id_ex_q.mem_write) &&
+		mem_addr_misaligned(alu_result_ex, mem_size_from_funct3(id_ex_q.funct3));
+	assign exception_valid_ex_eff = id_ex_q.exception_valid || control_target_misaligned_ex ||
+		mem_misaligned_ex;
 	assign exception_cause_ex_eff = control_target_misaligned_ex ? CAUSE_INST_MISALIGNED :
-		(mem_misaligned_ex ? (mem_read_ex ? CAUSE_LOAD_MISALIGNED : CAUSE_STORE_MISALIGNED) :
-		 exception_cause_ex);
+		(mem_misaligned_ex ? (id_ex_q.mem_read ? CAUSE_LOAD_MISALIGNED : CAUSE_STORE_MISALIGNED) :
+		 id_ex_q.exception_cause);
 	assign exception_tval_ex_eff = control_target_misaligned_ex ? redirect_target_raw_ex :
-		(mem_misaligned_ex ? alu_result_ex : exception_tval_ex);
-	assign system_event_ex = inst_valid_ex && (exception_valid_ex_eff || is_ecall_ex || is_mret_ex);
-	assign redirect_valid_ex = inst_valid_ex && !exception_valid_ex_eff &&
-		(is_csr_ex || is_jump_ex || (is_branch_ex && branch_taken_ex));
+		(mem_misaligned_ex ? alu_result_ex : id_ex_q.exception_tval);
+	assign system_event_ex = id_ex_q.inst_valid &&
+		(exception_valid_ex_eff || id_ex_q.is_ecall || id_ex_q.is_mret);
+	assign redirect_valid_ex = id_ex_q.inst_valid && !exception_valid_ex_eff &&
+		(id_ex_q.is_csr || id_ex_q.is_jump || (id_ex_q.is_branch && branch_taken_ex));
 	assign redirect_fire_ex = redirect_valid_ex && !fetch_wait && !mem_wait;
 
 	// ========== 7. EX_MEM Reg ==========
-	logic [63:0] pc_mem, alu_result_mem, rs2_data_mem;
-	logic [63:0] csr_read_data_mem, csr_write_data_mem;
-	logic [31:0] instr_mem;
-	logic [4:0]  rd_mem;
-	logic [2:0]  funct3_mem;
-	logic        inst_valid_mem, mem_read_mem, mem_write_mem, reg_write_mem;
-	logic        exception_valid_mem;
-	logic [63:0] exception_cause_mem, exception_tval_mem;
-	logic        is_csr_mem, is_ecall_mem, is_mret_mem, csr_write_enable_mem;
-	csr_op_t     csr_op_mem;
-	csr_addr_t   csr_addr_mem;
-	wb_sel_t     wb_sel_mem;
-
 	always_ff @(posedge clk) begin
 		if (reset || system_redirect_fire_wb) begin
-			pc_mem         <= 64'b0;
-			instr_mem      <= 32'b0;
-			inst_valid_mem <= 1'b0;
-			alu_result_mem <= 64'b0;
-			rs2_data_mem   <= 64'b0;
-			csr_read_data_mem <= 64'b0;
-			csr_write_data_mem <= 64'b0;
-			rd_mem         <= 5'b0;
-			funct3_mem     <= 3'b0;
-			mem_read_mem   <= 1'b0;
-			mem_write_mem  <= 1'b0;
-			reg_write_mem  <= 1'b0;
-			exception_valid_mem <= 1'b0;
-			exception_cause_mem <= 64'b0;
-			exception_tval_mem  <= 64'b0;
-			is_csr_mem     <= 1'b0;
-			is_ecall_mem   <= 1'b0;
-			is_mret_mem    <= 1'b0;
-			csr_write_enable_mem <= 1'b0;
-			csr_op_mem     <= CSR_OP_WRITE;
-			csr_addr_mem   <= 12'b0;
-			wb_sel_mem     <= WB_ALU;
+			ex_mem_q <= ex_mem_bubble();
 		end else if (!fetch_wait && !mem_wait) begin
-			// Allow load-use bubbles to flow, but hold MEM while dbus is still busy.
-			pc_mem         <= pc_ex;
-			instr_mem      <= instr_ex;
-			inst_valid_mem <= inst_valid_ex;
-			alu_result_mem <= alu_result_ex;
-			rs2_data_mem   <= rs2_forwarded_ex;
-			csr_read_data_mem <= csr_read_data_ex;
-			csr_write_data_mem <= csr_write_data_ex;
-			rd_mem         <= rd_ex;
-			funct3_mem     <= funct3_ex;
-			mem_read_mem   <= mem_read_ex;
-			mem_write_mem  <= mem_write_ex;
-			reg_write_mem  <= reg_write_ex;
-			exception_valid_mem <= exception_valid_ex_eff;
-			exception_cause_mem <= exception_cause_ex_eff;
-			exception_tval_mem  <= exception_tval_ex_eff;
-			is_csr_mem     <= is_csr_ex;
-			is_ecall_mem   <= is_ecall_ex;
-			is_mret_mem    <= is_mret_ex;
-			csr_write_enable_mem <= csr_write_enable_ex;
-			csr_op_mem     <= csr_op_ex;
-			csr_addr_mem   <= csr_addr_ex;
-			wb_sel_mem     <= wb_sel_ex;
+			ex_mem_q.pc              <= id_ex_q.pc;
+			ex_mem_q.instr           <= id_ex_q.instr;
+			ex_mem_q.inst_valid      <= id_ex_q.inst_valid;
+			ex_mem_q.alu_result      <= alu_result_ex;
+			ex_mem_q.rs2_data        <= rs2_forwarded_ex;
+			ex_mem_q.csr_read_data   <= csr_read_data_ex;
+			ex_mem_q.csr_write_data  <= csr_write_data_ex;
+			ex_mem_q.rd              <= id_ex_q.rd;
+			ex_mem_q.funct3          <= id_ex_q.funct3;
+			ex_mem_q.mem_read        <= id_ex_q.mem_read;
+			ex_mem_q.mem_write       <= id_ex_q.mem_write;
+			ex_mem_q.reg_write       <= id_ex_q.reg_write;
+			ex_mem_q.exception_valid <= exception_valid_ex_eff;
+			ex_mem_q.exception_cause <= exception_cause_ex_eff;
+			ex_mem_q.exception_tval  <= exception_tval_ex_eff;
+			ex_mem_q.is_csr          <= id_ex_q.is_csr;
+			ex_mem_q.is_ecall        <= id_ex_q.is_ecall;
+			ex_mem_q.is_mret         <= id_ex_q.is_mret;
+			ex_mem_q.csr_write_enable <= csr_write_enable_ex;
+			ex_mem_q.csr_op          <= id_ex_q.csr_op;
+			ex_mem_q.csr_addr        <= id_ex_q.csr_addr;
+			ex_mem_q.wb_sel          <= id_ex_q.wb_sel;
 		end
 	end
 
-	assign forward_data_mem = (wb_sel_mem == WB_PC4) ? (pc_mem + 64'd4) :
-		((wb_sel_mem == WB_CSR) ? csr_read_data_mem : alu_result_mem);
+	assign forward_data_mem = (ex_mem_q.wb_sel == WB_PC4) ? (ex_mem_q.pc + 64'd4) :
+		((ex_mem_q.wb_sel == WB_CSR) ? ex_mem_q.csr_read_data : ex_mem_q.alu_result);
 
 	// ========== 8. MEM ==========
 	logic [63:0] load_data_mem, store_data_aligned_mem;
 	strobe_t     store_strobe_mem;
 	msize_t      mem_size_mem;
 
-	assign mem_access_mem = inst_valid_mem && !exception_valid_mem && (mem_read_mem || mem_write_mem);
+	assign mem_access_mem = ex_mem_q.inst_valid && !ex_mem_q.exception_valid &&
+		(ex_mem_q.mem_read || ex_mem_q.mem_write);
 	assign mem_wait = mem_access_mem && !dresp.data_ok;
-	assign mem_size_mem = mem_size_from_funct3(funct3_mem);
-	assign store_strobe_mem = store_strobe_from_funct3(funct3_mem, alu_result_mem[2:0]);
-	assign store_data_aligned_mem = align_store_data(rs2_data_mem, alu_result_mem[2:0]);
-	assign load_data_mem = extend_load_data(dresp.data, alu_result_mem[2:0], funct3_mem);
-	assign system_event_mem = inst_valid_mem && (exception_valid_mem || is_ecall_mem || is_mret_mem);
+	assign mem_size_mem = mem_size_from_funct3(ex_mem_q.funct3);
+	assign store_strobe_mem = store_strobe_from_funct3(ex_mem_q.funct3, ex_mem_q.alu_result[2:0]);
+	assign store_data_aligned_mem = align_store_data(ex_mem_q.rs2_data, ex_mem_q.alu_result[2:0]);
+	assign load_data_mem = extend_load_data(dresp.data, ex_mem_q.alu_result[2:0], ex_mem_q.funct3);
+	assign system_event_mem = ex_mem_q.inst_valid &&
+		(ex_mem_q.exception_valid || ex_mem_q.is_ecall || ex_mem_q.is_mret);
 
-	assign dreq.valid  = mem_access_mem && !exception_valid_mem;
-	assign dreq.addr   = alu_result_mem;
+	assign dreq.valid  = mem_access_mem && !ex_mem_q.exception_valid;
+	assign dreq.addr   = ex_mem_q.alu_result;
 	assign dreq.size   = mem_size_mem;
-	assign dreq.strobe = mem_write_mem ? store_strobe_mem : 8'b0;
+	assign dreq.strobe = ex_mem_q.mem_write ? store_strobe_mem : 8'b0;
 	assign dreq.data   = store_data_aligned_mem;
 
 	// ========== 9. MEM_WB Reg ==========
-	logic [63:0] pc_wb, alu_result_wb, mem_data_wb;
-	logic [63:0] csr_read_data_wb, csr_write_data_wb;
-	logic [31:0] instr_wb;
-	logic [2:0]  funct3_wb;
-	logic        inst_valid_wb, mem_read_wb, mem_write_wb, commit_valid_wb, difftest_skip_wb;
-	logic        exception_valid_wb;
-	logic [63:0] exception_cause_wb, exception_tval_wb;
-	logic        is_csr_wb, is_ecall_wb, is_mret_wb, csr_write_enable_wb;
-	csr_op_t     csr_op_wb;
-	csr_addr_t   csr_addr_wb;
-	wb_sel_t     wb_sel_wb;
-
 	always_ff @(posedge clk) begin
 		if (reset || system_redirect_fire_wb) begin
-			pc_wb         <= 64'b0;
-			instr_wb      <= 32'b0;
-			inst_valid_wb <= 1'b0;
-			alu_result_wb <= 64'b0;
-			mem_data_wb   <= 64'b0;
-			csr_read_data_wb <= 64'b0;
-			csr_write_data_wb <= 64'b0;
-			rd_wb         <= 5'b0;
-			funct3_wb     <= 3'b0;
-			mem_read_wb   <= 1'b0;
-			mem_write_wb  <= 1'b0;
-			reg_write_wb  <= 1'b0;
-			exception_valid_wb <= 1'b0;
-			exception_cause_wb <= 64'b0;
-			exception_tval_wb  <= 64'b0;
-			is_csr_wb     <= 1'b0;
-			is_ecall_wb   <= 1'b0;
-			is_mret_wb    <= 1'b0;
-			csr_write_enable_wb <= 1'b0;
-			csr_op_wb     <= CSR_OP_WRITE;
-			csr_addr_wb   <= 12'b0;
-			wb_sel_wb     <= WB_ALU;
+			mem_wb_q <= mem_wb_bubble();
 		end else if (!fetch_wait && !mem_wait) begin
-			// Allow load-use bubbles to flow, but do not sample dbus before data_ok.
-			pc_wb         <= pc_mem;
-			instr_wb      <= instr_mem;
-			inst_valid_wb <= inst_valid_mem;
-			alu_result_wb <= alu_result_mem;
-			mem_data_wb   <= load_data_mem;
-			csr_read_data_wb <= csr_read_data_mem;
-			csr_write_data_wb <= csr_write_data_mem;
-			rd_wb         <= rd_mem;
-			funct3_wb     <= funct3_mem;
-			mem_read_wb   <= mem_read_mem;
-			mem_write_wb  <= mem_write_mem;
-			reg_write_wb  <= reg_write_mem;
-			exception_valid_wb <= exception_valid_mem;
-			exception_cause_wb <= exception_cause_mem;
-			exception_tval_wb  <= exception_tval_mem;
-			is_csr_wb     <= is_csr_mem;
-			is_ecall_wb   <= is_ecall_mem;
-			is_mret_wb    <= is_mret_mem;
-			csr_write_enable_wb <= csr_write_enable_mem;
-			csr_op_wb     <= csr_op_mem;
-			csr_addr_wb   <= csr_addr_mem;
-			wb_sel_wb     <= wb_sel_mem;
+			mem_wb_q.pc              <= ex_mem_q.pc;
+			mem_wb_q.instr           <= ex_mem_q.instr;
+			mem_wb_q.inst_valid      <= ex_mem_q.inst_valid;
+			mem_wb_q.alu_result      <= ex_mem_q.alu_result;
+			mem_wb_q.mem_data        <= load_data_mem;
+			mem_wb_q.csr_read_data   <= ex_mem_q.csr_read_data;
+			mem_wb_q.csr_write_data  <= ex_mem_q.csr_write_data;
+			mem_wb_q.rd              <= ex_mem_q.rd;
+			mem_wb_q.funct3          <= ex_mem_q.funct3;
+			mem_wb_q.mem_read        <= ex_mem_q.mem_read;
+			mem_wb_q.mem_write       <= ex_mem_q.mem_write;
+			mem_wb_q.reg_write       <= ex_mem_q.reg_write;
+			mem_wb_q.exception_valid <= ex_mem_q.exception_valid;
+			mem_wb_q.exception_cause <= ex_mem_q.exception_cause;
+			mem_wb_q.exception_tval  <= ex_mem_q.exception_tval;
+			mem_wb_q.is_csr          <= ex_mem_q.is_csr;
+			mem_wb_q.is_ecall        <= ex_mem_q.is_ecall;
+			mem_wb_q.is_mret         <= ex_mem_q.is_mret;
+			mem_wb_q.csr_write_enable <= ex_mem_q.csr_write_enable;
+			mem_wb_q.csr_op          <= ex_mem_q.csr_op;
+			mem_wb_q.csr_addr        <= ex_mem_q.csr_addr;
+			mem_wb_q.wb_sel          <= ex_mem_q.wb_sel;
 		end
 	end
 
 	// ========== 10. WB ==========
 	always_comb begin
-		case (wb_sel_wb)
-			WB_MEM: wb_data = mem_data_wb;
-			WB_PC4: wb_data = pc_wb + 64'd4;
-			WB_CSR: wb_data = csr_read_data_wb;
-			default: wb_data = alu_result_wb;
+		case (mem_wb_q.wb_sel)
+			WB_MEM: wb_data = mem_wb_q.mem_data;
+			WB_PC4: wb_data = mem_wb_q.pc + 64'd4;
+			WB_CSR: wb_data = mem_wb_q.csr_read_data;
+			default: wb_data = mem_wb_q.alu_result;
 		endcase
 	end
-	assign is_trap_wb = inst_valid_wb && (instr_wb == TRAP_INST);
-	assign commit_valid_wb = inst_valid_wb && !wb_fired;
+
+	assign is_trap_wb = mem_wb_q.inst_valid && (mem_wb_q.instr == TRAP_INST);
+	assign commit_valid_wb = mem_wb_q.inst_valid && !wb_fired;
 	assign hw_mip = (swint ? MIP_MSIP : 64'b0) |
 		(trint ? MIP_MTIP : 64'b0) |
 		(exint ? MIP_MEIP : 64'b0);
@@ -575,10 +441,11 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 	assign interrupt_pending_wb = interrupt_pending_mask_wb != 64'b0;
 	assign mstatus_mie_effective_wb = mstatus_mie_after_wb(
 		csr_mstatus_pre_trap,
-		commit_valid_wb && csr_write_enable_wb && !exception_valid_wb && !is_ecall_wb && !is_mret_wb,
-		csr_op_wb,
-		csr_addr_wb,
-		csr_write_data_wb
+		commit_valid_wb && mem_wb_q.csr_write_enable && !mem_wb_q.exception_valid &&
+			!mem_wb_q.is_ecall && !mem_wb_q.is_mret,
+		mem_wb_q.csr_op,
+		mem_wb_q.csr_addr,
+		mem_wb_q.csr_write_data
 	);
 	assign interrupt_enabled_wb = (priv_mode_q != PRIV_M) || mstatus_mie_effective_wb;
 	always_comb begin
@@ -589,39 +456,40 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 		else
 			interrupt_cause_wb = CAUSE_IRQ_SW;
 	end
-	assign interrupt_request_wb = commit_valid_wb && !exception_valid_wb &&
-		!is_ecall_wb && !is_mret_wb && interrupt_enabled_wb && interrupt_pending_wb;
+	assign interrupt_request_wb = commit_valid_wb && !mem_wb_q.exception_valid &&
+		!mem_wb_q.is_ecall && !mem_wb_q.is_mret && interrupt_enabled_wb && interrupt_pending_wb;
 	assign system_pending_wb = commit_valid_wb &&
-		(exception_valid_wb || is_ecall_wb || is_mret_wb || interrupt_request_wb);
+		(mem_wb_q.exception_valid || mem_wb_q.is_ecall || mem_wb_q.is_mret || interrupt_request_wb);
 	assign system_redirect_ready_wb = !fetch_wait_q && !mem_wait_q;
 	assign system_wb_waiting = system_pending_wb && !system_redirect_ready_wb;
 	assign commit_fire_wb = commit_valid_wb && !system_wb_waiting;
-	assign exception_commit_wb = exception_valid_wb && commit_fire_wb;
-	assign ecall_commit_wb = is_ecall_wb && commit_fire_wb;
-	assign mret_commit_wb = is_mret_wb && commit_fire_wb;
+	assign exception_commit_wb = mem_wb_q.exception_valid && commit_fire_wb;
+	assign ecall_commit_wb = mem_wb_q.is_ecall && commit_fire_wb;
+	assign mret_commit_wb = mem_wb_q.is_mret && commit_fire_wb;
 	assign interrupt_commit_wb = interrupt_request_wb && commit_fire_wb;
 	assign trap_commit_wb = exception_commit_wb || ecall_commit_wb || interrupt_commit_wb;
 	assign system_flush_front = system_event_ex || system_event_mem || system_pending_wb;
-	assign reg_write_wb_fire = reg_write_wb && commit_fire_wb && !exception_commit_wb &&
-		!ecall_commit_wb && !mret_commit_wb && (rd_wb != 5'b0);
-	assign csr_write_wb_fire = csr_write_enable_wb && commit_fire_wb &&
+	assign reg_write_wb_fire = mem_wb_q.reg_write && commit_fire_wb && !exception_commit_wb &&
+		!ecall_commit_wb && !mret_commit_wb && (mem_wb_q.rd != 5'b0);
+	assign csr_write_wb_fire = mem_wb_q.csr_write_enable && commit_fire_wb &&
 		!exception_commit_wb && !ecall_commit_wb && !mret_commit_wb;
 	assign system_redirect_fire_wb = trap_commit_wb || mret_commit_wb;
 	assign system_redirect_target_wb = mret_commit_wb ? csr_mepc : csr_mtvec;
 	assign csr_trap_wen_wb = trap_commit_wb;
 	assign csr_mret_wen_wb = mret_commit_wb;
-	assign csr_trap_mepc_wb = interrupt_commit_wb ? (pc_wb + 64'd4) : pc_wb;
+	assign csr_trap_mepc_wb = interrupt_commit_wb ? (mem_wb_q.pc + 64'd4) : mem_wb_q.pc;
 	assign csr_trap_mcause_wb = interrupt_commit_wb ? interrupt_cause_wb :
-		(exception_commit_wb ? exception_cause_wb : ecall_cause(priv_mode_q));
-	assign csr_trap_mtval_wb = exception_commit_wb ? exception_tval_wb : 64'b0;
+		(exception_commit_wb ? mem_wb_q.exception_cause : ecall_cause(priv_mode_q));
+	assign csr_trap_mtval_wb = exception_commit_wb ? mem_wb_q.exception_tval : 64'b0;
 	assign priv_mode_view = trap_commit_wb ? PRIV_M :
 		(mret_commit_wb ? csr_mret_priv : priv_mode_q);
 	assign priv_mode_o = priv_mode_view;
 	assign satp_o = csr_satp;
 	assign trap_valid_wb = is_trap_wb && commit_fire_wb;
 	assign trap_code_wb = rf_dbg[10][7:0];
-	assign difftest_skip_wb = ((mem_read_wb || mem_write_wb) && (alu_result_wb[31] == 1'b0)) ||
-		(is_csr_wb && (csr_addr_wb == 12'h3a0 || csr_addr_wb == 12'h3b0));
+	assign difftest_skip_wb = ((mem_wb_q.mem_read || mem_wb_q.mem_write) &&
+			(mem_wb_q.alu_result[31] == 1'b0)) ||
+		(mem_wb_q.is_csr && (mem_wb_q.csr_addr == 12'h3a0 || mem_wb_q.csr_addr == 12'h3b0));
 
 	always_ff @(posedge clk) begin
 		if (reset) begin
@@ -662,7 +530,7 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 		for (int i = 0; i < 32; i++) begin
 			if (i == 0)
 				gpr_dt[i] = 64'b0;
-			else if (reg_write_wb_fire && rd_wb == i[4:0])
+			else if (reg_write_wb_fire && mem_wb_q.rd == i[4:0])
 				gpr_dt[i] = wb_data;
 			else
 				gpr_dt[i] = rf_dbg[i];
@@ -675,13 +543,13 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 		.coreid             (csr_mhartid[7:0]),
 		.index              (8'b0),
 		.valid              (commit_fire_wb),
-		.pc                 (pc_wb),
-		.instr              (instr_wb),
+		.pc                 (mem_wb_q.pc),
+		.instr              (mem_wb_q.instr),
 		.skip               (difftest_skip_wb),
 		.isRVC              (1'b0),
 		.scFailed           (1'b0),
 		.wen                (reg_write_wb_fire),
-		.wdest              ({3'b0, rd_wb}),
+		.wdest              ({3'b0, mem_wb_q.rd}),
 		.wdata              (wb_data)
 	);
 
@@ -727,7 +595,7 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 		.coreid             (csr_mhartid[7:0]),
 		.valid              (trap_valid_wb),
 		.code               (trap_code_wb[2:0]),
-		.pc                 (pc_wb),
+		.pc                 (mem_wb_q.pc),
 		.cycleCnt           (cycle_cnt),
 		.instrCnt           (instr_cnt)
 	);
