@@ -18,6 +18,7 @@ module core_difftest_adapter import common::*;(
 	input  logic        reg_write_fire,
 	input  logic [4:0]  rd,
 	input  logic [63:0] wb_data,
+	input  logic        sc_failed_wb,
 	input  logic        mem_read_wb,
 	input  logic        mem_write_wb,
 	input  logic [63:0] alu_result_wb,
@@ -73,7 +74,7 @@ module core_difftest_adapter import common::*;(
 		.instr              (instr),
 		.skip               (skip),
 		.isRVC              (1'b0),
-		.scFailed           (1'b0),
+		.scFailed           (sc_failed_wb),
 		.wen                (reg_write_fire),
 		.wdest              ({3'b0, rd}),
 		.wdata              (wb_data)

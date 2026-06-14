@@ -19,7 +19,7 @@
 - `Makefile` 已有 `test-labplus-2/3/4` 目标。
 - `ready-to-run/lab+/` 已有 Lab+2/3/4 的 `.bin` 输入和对应反汇编文本。
 - `docs/report.md` 当前仍是 Lab6 报告，不是 Lab+ 报告。
-- 当前代码已支持 RV64M 乘除法和第一阶段静态分支预测；仍未实现 A 扩展原子指令、PMP 权限检查、page fault、cache、完整 xv6 磁盘 MMIO 支持。
+- 当前代码已支持 RV64M 乘除法、第一阶段静态分支预测，以及 Lab+3 需要的 A 扩展最小集合；仍未实现 PMP 权限检查、page fault、cache、完整 xv6 磁盘 MMIO 支持。
 
 ## 已完成记录
 
@@ -109,6 +109,27 @@
   - Lab+2 50M cycle 采样：无 Difftest mismatch，达到 cycle cap。
   - `timeout 45s make test-lab5 || true`：输出 `Return from init! Test passed`。
   - `make test-lab6`：输出 `Privileged test finished.` / `Exit with code = 0`。
+
+### 2026-06-14：完成任务 6
+
+- 分文档：`Doc/Lab+/labplus3_atomic_report.md`。
+- 已实现 Lab+3 `atomicity.S` 覆盖的最小 A 扩展集合：
+  - `amoswap.w`
+  - `amoadd.w`
+  - `lr.w`
+  - `sc.w`
+- 实现要点：
+  - AMO W 指令按 RV64 规则将 32-bit 旧值符号扩展写回。
+  - `amoswap.w` / `amoadd.w` 在 MEM 阶段用两步 RMW：先读旧值，再写新值。
+  - `lr.w` 记录 word-granularity reservation address。
+  - `sc.w` 成功时写内存并写回 `rd=0`，失败时不写内存并写回 `rd=1`，随后清除 reservation。
+  - `DifftestInstrCommit.scFailed` 已接入 WB 阶段的 SC 失败状态。
+- 已验证：
+  - `make sim`：构建通过。
+  - `make test-labplus-3`：通过，`HIT GOOD TRAP at pc = 0x800000dc`。
+  - `make test-lab4`：通过，`HIT GOOD TRAP at pc = 0x8001fff8`。
+  - `timeout 45s make test-lab5 || true`：输出 `Return from init! Test passed`。
+  - `make test-lab6`：输出 `Privileged test finished.` / `Exit with code = 0`；命令随后被用户中断，但成功标志已出现。
 
 ## TODO 顺序
 
@@ -248,7 +269,7 @@
 - 产出：
   - 已得到优化前后 cycle/IPC/预测命中率对比。
 
-### 6. 实现 Lab+3 原子指令的最小集合
+### 6. 实现 Lab+3 原子指令的最小集合（已完成）
 
 - 成本：中高
 - 优先级：中
@@ -256,10 +277,10 @@
 - 目标：优先通过 `atomicity.S` 中实际出现的指令。
 - 当前状态：
   - `atomicity.S` 明确包含 `amoswap.w`、`amoadd.w`、`lr.w`、`sc.w`。
-  - `core_decode.sv` 没有 AMO opcode `7'b0101111`。
-  - 当前没有 reservation set。
-  - `core_difftest_adapter.sv` 的 `scFailed` 固定为 `1'b0`。
-  - 未见 `DifftestAtomicEvent` 连接。
+  - 已实现 AMO opcode `7'b0101111` 的最小 W 指令集合。
+  - 已实现单 hart reservation set。
+  - `core_difftest_adapter.sv` 的 `scFailed` 已接入。
+  - 未接入 `DifftestAtomicEvent`，当前单核 Lab+3 测试通过不依赖该事件。
 - 要做：
   - 增加 AMO/LR/SC 译码。
   - 先实现 `amoswap.w`、`amoadd.w`、`lr.w`、`sc.w`。
@@ -275,7 +296,7 @@
   - `make test-lab5`
   - `make test-lab6`
 - 产出：
-  - 原子指令 Bonus 的实现说明。
+  - 已形成原子指令 Bonus 的实现说明。
 
 ### 7. 扩展完整 32-bit AMO 指令
 
@@ -450,7 +471,7 @@
 
 - 任务 4：性能统计。（已完成）
 - 任务 5：简单分支预测。（已完成）
-- 任务 6：Lab+3 原子指令最小集合。
+- 任务 6：Lab+3 原子指令最小集合。（已完成）
 - 任务 8：PMP 权限检查。
 
 目标：围绕 `test-labplus-2/3/4` 做可验证功能。
@@ -473,6 +494,6 @@
 
 ## 当前最推荐的下一步
 
-任务 0-5 已完成。下一步优先做任务 6：实现 Lab+3 原子指令的最小集合。
+任务 0-6 已完成。下一步优先做任务 8：实现 PMP 权限检查。
 
-理由：Lab+2 已完成 M 扩展、正确性推进、性能统计和第一阶段简单分支预测；继续投入动态预测/BTB 的边际收益不如先打通 Lab+3 的 A 扩展测试闭环。
+理由：Lab+3 的最小 A 扩展测试已经通过；完整 AMO 扩展属于加分补全项，而 PMP/access fault 是推进 Lab+4 的关键阻塞。

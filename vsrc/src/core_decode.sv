@@ -19,6 +19,7 @@ module core_decode import common::*;(
         decode_out.alu_op = ALU_ADD;
         decode_out.wb_sel = WB_ALU;
         decode_out.csr_op = CSR_OP_WRITE;
+        decode_out.amo_op = AMO_NONE;
 
         case (opcode)
             7'b0010011, 7'b0000011, 7'b1100111, 7'b0011011: begin
@@ -78,6 +79,47 @@ module core_decode import common::*;(
                 decode_out.alu_src   = 1'b1;
                 decode_out.mem_write = 1'b1;
                 decode_out.alu_op    = ALU_ADD;
+            end
+            7'b0101111: begin
+                decode_out.is_illegal = 1'b1;
+                if (decode_out.funct3 == 3'b010) begin
+                    decode_out.reg_write = 1'b1;
+                    decode_out.alu_src   = 1'b1;
+                    decode_out.mem_read  = 1'b1;
+                    decode_out.wb_sel    = WB_MEM;
+                    decode_out.alu_op    = ALU_ADD;
+                    decode_out.is_amo    = 1'b1;
+                    decode_out.is_illegal = 1'b0;
+                    case (instr[31:27])
+                        5'b00000: begin
+                            decode_out.mem_write = 1'b1;
+                            decode_out.amo_op    = AMO_ADD;
+                        end
+                        5'b00001: begin
+                            decode_out.mem_write = 1'b1;
+                            decode_out.amo_op    = AMO_SWAP;
+                        end
+                        5'b00010: begin
+                            decode_out.is_lr = 1'b1;
+                            decode_out.amo_op = AMO_LR;
+                            decode_out.is_illegal = (decode_out.rs2 != 5'b0);
+                        end
+                        5'b00011: begin
+                            decode_out.mem_write = 1'b1;
+                            decode_out.is_sc     = 1'b1;
+                            decode_out.amo_op    = AMO_SC;
+                        end
+                        default: begin
+                            decode_out.reg_write = 1'b0;
+                            decode_out.mem_read  = 1'b0;
+                            decode_out.mem_write = 1'b0;
+                            decode_out.is_amo    = 1'b0;
+                            decode_out.amo_op    = AMO_NONE;
+                            decode_out.wb_sel    = WB_ALU;
+                            decode_out.is_illegal = 1'b1;
+                        end
+                    endcase
+                end
             end
             7'b0110011: begin
                 decode_out.reg_write = 1'b1;

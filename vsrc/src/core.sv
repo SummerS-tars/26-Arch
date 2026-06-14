@@ -91,6 +91,8 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 	csr_addr_t   csr_addr_id;
 	logic [63:0] csr_zimm_id;
 	logic        mem_read_id, mem_write_id, reg_write_id, is_illegal_id;
+	logic        is_amo_id, is_lr_id, is_sc_id;
+	amo_op_t     amo_op_id;
 	wb_sel_t     wb_sel_id;
 	logic        pred_taken_id;
 	logic [63:0] pred_target_id;
@@ -115,6 +117,10 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 	assign is_branch_id = decode_id.is_branch;
 	assign is_jump_id   = decode_id.is_jump;
 	assign is_jalr_id   = decode_id.is_jalr;
+	assign is_amo_id    = decode_id.is_amo;
+	assign is_lr_id     = decode_id.is_lr;
+	assign is_sc_id     = decode_id.is_sc;
+	assign amo_op_id    = decode_id.amo_op;
 	assign is_csr_id    = decode_id.is_csr;
 	assign is_ecall_id  = decode_id.is_ecall;
 	assign is_mret_id   = decode_id.is_mret;
@@ -180,6 +186,10 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 			id_ex_q.is_jalr         <= is_jalr_id;
 			id_ex_q.pred_taken      <= pred_taken_id;
 			id_ex_q.pred_target     <= pred_target_id;
+			id_ex_q.is_amo          <= is_amo_id;
+			id_ex_q.is_lr           <= is_lr_id;
+			id_ex_q.is_sc           <= is_sc_id;
+			id_ex_q.amo_op          <= amo_op_id;
 			id_ex_q.is_csr          <= is_csr_id;
 			id_ex_q.is_ecall        <= is_ecall_id;
 			id_ex_q.is_mret         <= is_mret_id;
@@ -333,12 +343,13 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 	assign control_target_misaligned_ex = id_ex_q.inst_valid &&
 		(id_ex_q.is_jump || (id_ex_q.is_branch && branch_taken_ex)) &&
 		(redirect_target_raw_ex[1:0] != 2'b00);
-	assign mem_misaligned_ex = id_ex_q.inst_valid && (id_ex_q.mem_read || id_ex_q.mem_write) &&
+	assign mem_misaligned_ex = id_ex_q.inst_valid &&
+		(id_ex_q.mem_read || id_ex_q.mem_write || id_ex_q.is_amo) &&
 		mem_addr_misaligned(alu_result_ex, mem_size_from_funct3(id_ex_q.funct3));
 	assign exception_valid_ex_eff = id_ex_q.exception_valid || control_target_misaligned_ex ||
 		mem_misaligned_ex;
 	assign exception_cause_ex_eff = control_target_misaligned_ex ? CAUSE_INST_MISALIGNED :
-		(mem_misaligned_ex ? (id_ex_q.mem_read ? CAUSE_LOAD_MISALIGNED : CAUSE_STORE_MISALIGNED) :
+		(mem_misaligned_ex ? ((id_ex_q.mem_read && !id_ex_q.is_sc) ? CAUSE_LOAD_MISALIGNED : CAUSE_STORE_MISALIGNED) :
 		 id_ex_q.exception_cause);
 	assign exception_tval_ex_eff = control_target_misaligned_ex ? redirect_target_raw_ex :
 		(mem_misaligned_ex ? alu_result_ex : id_ex_q.exception_tval);
@@ -372,6 +383,10 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 			ex_mem_q.exception_valid <= exception_valid_ex_eff;
 			ex_mem_q.exception_cause <= exception_cause_ex_eff;
 			ex_mem_q.exception_tval  <= exception_tval_ex_eff;
+			ex_mem_q.is_amo          <= id_ex_q.is_amo;
+			ex_mem_q.is_lr           <= id_ex_q.is_lr;
+			ex_mem_q.is_sc           <= id_ex_q.is_sc;
+			ex_mem_q.amo_op          <= id_ex_q.amo_op;
 			ex_mem_q.is_csr          <= id_ex_q.is_csr;
 			ex_mem_q.is_ecall        <= id_ex_q.is_ecall;
 			ex_mem_q.is_mret         <= id_ex_q.is_mret;
@@ -389,22 +404,90 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 	logic [63:0] load_data_mem, store_data_aligned_mem;
 	strobe_t     store_strobe_mem;
 	msize_t      mem_size_mem;
+	logic        regular_mem_access_mem, amo_access_mem, amo_rmw_mem;
+	logic        amo_read_phase_mem, amo_write_phase_mem, amo_write_phase_q;
+	logic        amo_bus_access_mem, amo_done_mem;
+	logic        reservation_valid_q, sc_success_mem, sc_failed_mem;
+	logic [61:0] reservation_addr_q;
+	logic [63:0] amo_shifted_read_mem, amo_read_data_mem, amo_saved_read_data_q;
+	logic [63:0] amo_store_data_next_mem, amo_store_data_q, amo_write_data_mem;
+	logic [63:0] amo_wb_data_mem;
+	logic [31:0] amo_old_word_mem, amo_new_word_mem;
 
-	assign mem_access_mem = ex_mem_q.inst_valid && !ex_mem_q.exception_valid &&
-		(ex_mem_q.mem_read || ex_mem_q.mem_write);
-	assign mem_wait = mem_access_mem && !dresp.data_ok;
-	assign mem_size_mem = mem_size_from_funct3(ex_mem_q.funct3);
+	assign regular_mem_access_mem = ex_mem_q.inst_valid && !ex_mem_q.exception_valid &&
+		!ex_mem_q.is_amo && (ex_mem_q.mem_read || ex_mem_q.mem_write);
+	assign amo_access_mem = ex_mem_q.inst_valid && !ex_mem_q.exception_valid && ex_mem_q.is_amo;
+	assign amo_rmw_mem = amo_access_mem && !ex_mem_q.is_lr && !ex_mem_q.is_sc;
+	assign sc_success_mem = amo_access_mem && ex_mem_q.is_sc && reservation_valid_q &&
+		(reservation_addr_q == ex_mem_q.alu_result[63:2]);
+	assign sc_failed_mem = amo_access_mem && ex_mem_q.is_sc && !sc_success_mem;
+	assign amo_read_phase_mem = amo_access_mem && !ex_mem_q.is_sc && !amo_write_phase_q;
+	assign amo_write_phase_mem = amo_access_mem &&
+		((amo_rmw_mem && amo_write_phase_q) || (ex_mem_q.is_sc && sc_success_mem));
+	assign amo_bus_access_mem = amo_read_phase_mem || amo_write_phase_mem;
+	assign amo_done_mem = (ex_mem_q.is_lr && amo_read_phase_mem && dresp.data_ok) ||
+		(amo_rmw_mem && amo_write_phase_mem && dresp.data_ok) ||
+		(ex_mem_q.is_sc && (sc_failed_mem || (sc_success_mem && dresp.data_ok)));
+	assign mem_access_mem = regular_mem_access_mem || amo_access_mem;
+	assign mem_wait = regular_mem_access_mem ? !dresp.data_ok : (amo_access_mem && !amo_done_mem);
+	assign mem_size_mem = ex_mem_q.is_amo ? MSIZE4 : mem_size_from_funct3(ex_mem_q.funct3);
 	assign store_strobe_mem = store_strobe_from_funct3(ex_mem_q.funct3, ex_mem_q.alu_result[2:0]);
 	assign store_data_aligned_mem = align_store_data(ex_mem_q.rs2_data, ex_mem_q.alu_result[2:0]);
 	assign load_data_mem = extend_load_data(dresp.data, ex_mem_q.alu_result[2:0], ex_mem_q.funct3);
+	assign amo_shifted_read_mem = dresp.data >> {ex_mem_q.alu_result[2:0], 3'b0};
+	assign amo_old_word_mem = amo_shifted_read_mem[31:0];
+	assign amo_read_data_mem = {{32{amo_old_word_mem[31]}}, amo_old_word_mem};
+	assign amo_store_data_next_mem = align_store_data({32'b0, amo_new_word_mem}, ex_mem_q.alu_result[2:0]);
+	assign amo_write_data_mem = ex_mem_q.is_sc ? store_data_aligned_mem : amo_store_data_q;
+	assign amo_wb_data_mem = ex_mem_q.is_sc ? {63'b0, sc_failed_mem} :
+		(amo_write_phase_q ? amo_saved_read_data_q : amo_read_data_mem);
 	assign system_event_mem = ex_mem_q.inst_valid &&
 		(ex_mem_q.exception_valid || ex_mem_q.is_ecall || ex_mem_q.is_mret);
 
-	assign dreq.valid  = mem_access_mem && !ex_mem_q.exception_valid;
+	always_comb begin
+		case (ex_mem_q.amo_op)
+			AMO_ADD:  amo_new_word_mem = amo_old_word_mem + ex_mem_q.rs2_data[31:0];
+			default:  amo_new_word_mem = ex_mem_q.rs2_data[31:0];
+		endcase
+	end
+
+	always_ff @(posedge clk) begin
+		if (reset || system_redirect_fire_wb) begin
+			amo_write_phase_q     <= 1'b0;
+			amo_saved_read_data_q <= 64'b0;
+			amo_store_data_q      <= 64'b0;
+		end else if (!amo_access_mem || sc_failed_mem ||
+			(ex_mem_q.is_lr && amo_read_phase_mem && dresp.data_ok) ||
+			(amo_write_phase_mem && dresp.data_ok)) begin
+			amo_write_phase_q <= 1'b0;
+		end else if (amo_rmw_mem && amo_read_phase_mem && dresp.data_ok) begin
+			amo_write_phase_q     <= 1'b1;
+			amo_saved_read_data_q <= amo_read_data_mem;
+			amo_store_data_q      <= amo_store_data_next_mem;
+		end
+	end
+
+	always_ff @(posedge clk) begin
+		if (reset) begin
+			reservation_valid_q <= 1'b0;
+			reservation_addr_q  <= 62'b0;
+		end else begin
+			if (amo_access_mem && ex_mem_q.is_lr && amo_read_phase_mem && dresp.data_ok) begin
+				reservation_valid_q <= 1'b1;
+				reservation_addr_q  <= ex_mem_q.alu_result[63:2];
+			end
+			if (amo_access_mem && ex_mem_q.is_sc && amo_done_mem)
+				reservation_valid_q <= 1'b0;
+		end
+	end
+
+	assign dreq.valid  = regular_mem_access_mem || amo_bus_access_mem;
 	assign dreq.addr   = ex_mem_q.alu_result;
 	assign dreq.size   = mem_size_mem;
-	assign dreq.strobe = ex_mem_q.mem_write ? store_strobe_mem : 8'b0;
-	assign dreq.data   = store_data_aligned_mem;
+	assign dreq.strobe = regular_mem_access_mem ?
+		(ex_mem_q.mem_write ? store_strobe_mem : 8'b0) :
+		(amo_write_phase_mem ? store_strobe_mem : 8'b0);
+	assign dreq.data   = regular_mem_access_mem ? store_data_aligned_mem : amo_write_data_mem;
 
 	// ========== 9. MEM_WB Reg ==========
 	always_ff @(posedge clk) begin
@@ -415,7 +498,7 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 			mem_wb_q.instr           <= ex_mem_q.instr;
 			mem_wb_q.inst_valid      <= ex_mem_q.inst_valid;
 			mem_wb_q.alu_result      <= ex_mem_q.alu_result;
-			mem_wb_q.mem_data        <= load_data_mem;
+			mem_wb_q.mem_data        <= ex_mem_q.is_amo ? amo_wb_data_mem : load_data_mem;
 			mem_wb_q.csr_read_data   <= ex_mem_q.csr_read_data;
 			mem_wb_q.csr_write_data  <= ex_mem_q.csr_write_data;
 			mem_wb_q.rd              <= ex_mem_q.rd;
@@ -426,6 +509,8 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 			mem_wb_q.exception_valid <= ex_mem_q.exception_valid;
 			mem_wb_q.exception_cause <= ex_mem_q.exception_cause;
 			mem_wb_q.exception_tval  <= ex_mem_q.exception_tval;
+			mem_wb_q.is_sc           <= ex_mem_q.is_sc;
+			mem_wb_q.sc_failed       <= ex_mem_q.is_sc && sc_failed_mem;
 			mem_wb_q.is_csr          <= ex_mem_q.is_csr;
 			mem_wb_q.is_ecall        <= ex_mem_q.is_ecall;
 			mem_wb_q.is_mret         <= ex_mem_q.is_mret;
@@ -632,6 +717,7 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 		.reg_write_fire (reg_write_wb_fire),
 		.rd             (mem_wb_q.rd),
 		.wb_data        (wb_data),
+		.sc_failed_wb   (mem_wb_q.is_sc && mem_wb_q.sc_failed),
 		.mem_read_wb    (mem_wb_q.mem_read),
 		.mem_write_wb   (mem_wb_q.mem_write),
 		.alu_result_wb  (mem_wb_q.alu_result),

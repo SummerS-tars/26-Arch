@@ -251,6 +251,14 @@ typedef enum logic [1:0] {
     CSR_OP_CLEAR = 2'd2
 } csr_op_t;
 
+typedef enum logic [2:0] {
+    AMO_NONE = 3'd0,
+    AMO_SWAP = 3'd1,
+    AMO_ADD  = 3'd2,
+    AMO_LR   = 3'd3,
+    AMO_SC   = 3'd4
+} amo_op_t;
+
 typedef enum logic [1:0] {
     PRIV_U = 2'd0,
     PRIV_S = 2'd1,
@@ -273,6 +281,10 @@ typedef struct packed {
     logic    is_branch;
     logic    is_jump;
     logic    is_jalr;
+    logic    is_amo;
+    logic    is_lr;
+    logic    is_sc;
+    amo_op_t amo_op;
     logic    is_csr;
     logic    is_ecall;
     logic    is_mret;
@@ -311,6 +323,10 @@ typedef struct packed {
     logic      is_jalr;
     logic      pred_taken;
     u64        pred_target;
+    logic      is_amo;
+    logic      is_lr;
+    logic      is_sc;
+    amo_op_t   amo_op;
     logic      is_csr;
     logic      is_ecall;
     logic      is_mret;
@@ -336,6 +352,10 @@ typedef struct packed {
     logic      exception_valid;
     u64        exception_cause;
     u64        exception_tval;
+    logic      is_amo;
+    logic      is_lr;
+    logic      is_sc;
+    amo_op_t   amo_op;
     logic      is_csr;
     logic      is_ecall;
     logic      is_mret;
@@ -361,6 +381,8 @@ typedef struct packed {
     logic      exception_valid;
     u64        exception_cause;
     u64        exception_tval;
+    logic      is_sc;
+    logic      sc_failed;
     logic      is_csr;
     logic      is_ecall;
     logic      is_mret;

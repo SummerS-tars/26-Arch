@@ -14,7 +14,7 @@ Update it whenever the current implementation stage or verified support boundary
 
 - Staged Fudan 26-Arch CPU project: simulation + Difftest + `ready-to-run/` tests + Vivado/board path.
 - Main student RTL lives under `vsrc/src/`; framework under `difftest/`, `vsrc/util/`.
-- Active milestone: Lab+ feature work in progress; tasks 0–5 from `Doc/Lab+/TODO.md` are completed.
+- Active milestone: Lab+ feature work in progress; tasks 0–6 from `Doc/Lab+/TODO.md` are completed.
 
 ## Current implementation snapshot
 
@@ -28,20 +28,21 @@ Update it whenever the current implementation stage or verified support boundary
 - RV64M integer multiply/divide support is implemented in decode/ALU
 - Lab+2 performance counters are available with `make sim BENCHMARK=1`
 - Lab+2 static branch prediction is implemented for conditional branches: backward taken, forward not taken
+- Lab+3 minimal A extension support is implemented for `amoswap.w`, `amoadd.w`, `lr.w`, and `sc.w`
 - Lab 1–6 behavior preserved after refactor
 
 ## Current validation snapshot
 
 | Target | Result |
 |--------|--------|
-| `make sim` | pass — after static branch prediction |
+| `make sim` | pass — after minimal A extension implementation |
 | Lab1 extra direct run | pass — `HIT GOOD TRAP at pc = 0x8002001c` |
 | `make test-lab4` | pass — post-refactor verified |
 | `make test-lab5` | pass — `Return from init! Test passed` |
 | `make test-lab6` | pass — `Privileged test finished.` / `Exit with code = 0` |
 | Lab+2 direct run | partial — no mismatch; default delay passes qsort/queen before 600s timeout, `DELAY=0` passes qsort/queen/bf before 600s timeout |
 | Lab+2 perf sample | pass — 50M-cycle sample IPC 0.190101 after static branch prediction, branch prediction accuracy ~73.3% |
-| Lab+3 direct run | fail — Difftest mismatch at `pc = 0x80000028`, first `amoswap.w` unsupported |
+| Lab+3 direct run | pass — `HIT GOOD TRAP at pc = 0x800000dc` |
 | Lab+4 direct run | fail — no-diff run exceeds cycle limit at `pc = 0x0` with explicit cycle cap |
 
 ## Refactor boundary (completed)
@@ -58,9 +59,9 @@ Steps 1–7 from `Doc/Refactor_TODO.md` are done on branch `refactor/before_labp
 
 ## Likely next direction
 
-1. Implement A extension minimal set (`amoswap.w`, `amoadd.w`, `lr.w`, `sc.w`) for Lab+3.
-2. Consider BHT/BTB only after Lab+3/Lab+4 functional baselines are improved.
-3. Implement PMP/access fault path for Lab+4 after M/A baselines are understood.
+1. Implement PMP/access fault path for Lab+4.
+2. Optionally extend the 32-bit AMO set after Lab+4 has a better functional baseline.
+3. Consider BHT/BTB only after Lab+3/Lab+4 functional baselines are improved.
 4. Revisit IBus addr latch / CBus `saved_req` hold after lab+ with board regression if needed.
 
 ## Update rule
