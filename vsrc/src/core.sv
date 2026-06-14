@@ -412,7 +412,7 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 	logic [63:0] amo_shifted_read_mem, amo_read_data_mem, amo_saved_read_data_q;
 	logic [63:0] amo_store_data_next_mem, amo_store_data_q, amo_write_data_mem;
 	logic [63:0] amo_wb_data_mem;
-	logic [31:0] amo_old_word_mem, amo_new_word_mem;
+	logic [31:0] amo_old_word_mem, amo_rs2_word_mem, amo_new_word_mem;
 
 	assign regular_mem_access_mem = ex_mem_q.inst_valid && !ex_mem_q.exception_valid &&
 		!ex_mem_q.is_amo && (ex_mem_q.mem_read || ex_mem_q.mem_write);
@@ -436,6 +436,7 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 	assign load_data_mem = extend_load_data(dresp.data, ex_mem_q.alu_result[2:0], ex_mem_q.funct3);
 	assign amo_shifted_read_mem = dresp.data >> {ex_mem_q.alu_result[2:0], 3'b0};
 	assign amo_old_word_mem = amo_shifted_read_mem[31:0];
+	assign amo_rs2_word_mem = ex_mem_q.rs2_data[31:0];
 	assign amo_read_data_mem = {{32{amo_old_word_mem[31]}}, amo_old_word_mem};
 	assign amo_store_data_next_mem = align_store_data({32'b0, amo_new_word_mem}, ex_mem_q.alu_result[2:0]);
 	assign amo_write_data_mem = ex_mem_q.is_sc ? store_data_aligned_mem : amo_store_data_q;
@@ -446,8 +447,19 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 
 	always_comb begin
 		case (ex_mem_q.amo_op)
-			AMO_ADD:  amo_new_word_mem = amo_old_word_mem + ex_mem_q.rs2_data[31:0];
-			default:  amo_new_word_mem = ex_mem_q.rs2_data[31:0];
+			AMO_ADD:  amo_new_word_mem = amo_old_word_mem + amo_rs2_word_mem;
+			AMO_XOR:  amo_new_word_mem = amo_old_word_mem ^ amo_rs2_word_mem;
+			AMO_AND:  amo_new_word_mem = amo_old_word_mem & amo_rs2_word_mem;
+			AMO_OR:   amo_new_word_mem = amo_old_word_mem | amo_rs2_word_mem;
+			AMO_MIN:  amo_new_word_mem = ($signed(amo_old_word_mem) < $signed(amo_rs2_word_mem)) ?
+				amo_old_word_mem : amo_rs2_word_mem;
+			AMO_MAX:  amo_new_word_mem = ($signed(amo_old_word_mem) > $signed(amo_rs2_word_mem)) ?
+				amo_old_word_mem : amo_rs2_word_mem;
+			AMO_MINU: amo_new_word_mem = (amo_old_word_mem < amo_rs2_word_mem) ?
+				amo_old_word_mem : amo_rs2_word_mem;
+			AMO_MAXU: amo_new_word_mem = (amo_old_word_mem > amo_rs2_word_mem) ?
+				amo_old_word_mem : amo_rs2_word_mem;
+			default:  amo_new_word_mem = amo_rs2_word_mem;
 		endcase
 	end
 

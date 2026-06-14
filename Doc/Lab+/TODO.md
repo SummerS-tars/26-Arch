@@ -131,6 +131,27 @@
   - `timeout 45s make test-lab5 || true`：输出 `Return from init! Test passed`。
   - `make test-lab6`：输出 `Privileged test finished.` / `Exit with code = 0`；命令随后被用户中断，但成功标志已出现。
 
+### 2026-06-14：完成任务 7
+
+- 分文档：`Doc/Lab+/labplus3_full_amo32_report.md`。
+- 已从任务 6 的最小 A 扩展集合继续补全 32-bit AMO RMW 指令：
+  - `amoxor.w`
+  - `amoand.w`
+  - `amoor.w`
+  - `amomin.w` / `amomax.w`
+  - `amominu.w` / `amomaxu.w`
+- 已新增可重复生成的裸机自测：
+  - `ready-to-run/lab+/3/gen_atomic_full_w_test.py`
+  - `ready-to-run/lab+/3/atomic_full_w.bin`
+  - `ready-to-run/lab+/3/atomic_full_w.S`
+- 已验证：
+  - `make sim`：构建通过。
+  - `atomic_full_w.bin`：通过，`HIT GOOD TRAP at pc = 0x800001c4`。
+  - `make test-labplus-3`：通过，`HIT GOOD TRAP at pc = 0x800000dc`。
+  - `make test-lab4`：通过，`HIT GOOD TRAP at pc = 0x8001fff8`。
+  - `timeout 45s make test-lab5 || true`：输出 `Return from init! Test passed`。
+  - `make test-lab6`：输出 `Privileged test finished.` / `Exit with code = 0`；命令随后被用户中断，但成功标志已出现。
+
 ## TODO 顺序
 
 ### 0. 确认 Lab+ 测试输入并建立失败基线（已完成）
@@ -298,14 +319,15 @@
 - 产出：
   - 已形成原子指令 Bonus 的实现说明。
 
-### 7. 扩展完整 32-bit AMO 指令
+### 7. 扩展完整 32-bit AMO 指令（已完成）
 
 - 成本：中
 - 优先级：中低
 - 依赖：任务 6
 - 目标：从最小集合扩展到官方列出的全部 32-bit AMO。
 - 当前状态：
-  - 任务 6 完成后，AMO 数据通路已有基础。
+  - 已完成完整 32-bit AMO RMW 指令扩展。
+  - 仍未实现 64-bit AMO D 指令。
 - 要做：
   - 增加 `amoxor.w`。
   - 增加 `amoand.w`。
@@ -317,7 +339,7 @@
   - `make test-labplus-3`
   - 可额外自写小汇编覆盖所有 AMO op。
 - 产出：
-  - 更完整的 A 扩展说明。
+  - 已形成更完整的 A 扩展说明。
 
 ### 8. 实现 PMP 权限检查
 
@@ -478,7 +500,7 @@
 
 ### 第三批：高成本探索
 
-- 任务 7：完整 32-bit AMO。
+- 任务 7：完整 32-bit AMO。（已完成）
 - 任务 9：page fault。
 - 任务 10：S-mode trap / delegation / sret。
 - 任务 11：完整 xv6 主 Track。
@@ -494,6 +516,6 @@
 
 ## 当前最推荐的下一步
 
-任务 0-6 已完成。下一步优先做任务 8：实现 PMP 权限检查。
+任务 0-7 已完成。下一步优先做任务 8：实现 PMP 权限检查。
 
-理由：Lab+3 的最小 A 扩展测试已经通过；完整 AMO 扩展属于加分补全项，而 PMP/access fault 是推进 Lab+4 的关键阻塞。
+理由：Lab+3 的最小 A 扩展和完整 32-bit AMO RMW 指令均已完成；PMP/access fault 是推进 Lab+4 的关键阻塞。

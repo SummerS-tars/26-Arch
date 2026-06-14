@@ -109,6 +109,34 @@ module core_decode import common::*;(
                             decode_out.is_sc     = 1'b1;
                             decode_out.amo_op    = AMO_SC;
                         end
+                        5'b00100: begin
+                            decode_out.mem_write = 1'b1;
+                            decode_out.amo_op    = AMO_XOR;
+                        end
+                        5'b01000: begin
+                            decode_out.mem_write = 1'b1;
+                            decode_out.amo_op    = AMO_OR;
+                        end
+                        5'b01100: begin
+                            decode_out.mem_write = 1'b1;
+                            decode_out.amo_op    = AMO_AND;
+                        end
+                        5'b10000: begin
+                            decode_out.mem_write = 1'b1;
+                            decode_out.amo_op    = AMO_MIN;
+                        end
+                        5'b10100: begin
+                            decode_out.mem_write = 1'b1;
+                            decode_out.amo_op    = AMO_MAX;
+                        end
+                        5'b11000: begin
+                            decode_out.mem_write = 1'b1;
+                            decode_out.amo_op    = AMO_MINU;
+                        end
+                        5'b11100: begin
+                            decode_out.mem_write = 1'b1;
+                            decode_out.amo_op    = AMO_MAXU;
+                        end
                         default: begin
                             decode_out.reg_write = 1'b0;
                             decode_out.mem_read  = 1'b0;

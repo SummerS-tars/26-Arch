@@ -251,12 +251,19 @@ typedef enum logic [1:0] {
     CSR_OP_CLEAR = 2'd2
 } csr_op_t;
 
-typedef enum logic [2:0] {
-    AMO_NONE = 3'd0,
-    AMO_SWAP = 3'd1,
-    AMO_ADD  = 3'd2,
-    AMO_LR   = 3'd3,
-    AMO_SC   = 3'd4
+typedef enum logic [3:0] {
+    AMO_NONE = 4'd0,
+    AMO_SWAP = 4'd1,
+    AMO_ADD  = 4'd2,
+    AMO_LR   = 4'd3,
+    AMO_SC   = 4'd4,
+    AMO_XOR  = 4'd5,
+    AMO_AND  = 4'd6,
+    AMO_OR   = 4'd7,
+    AMO_MIN  = 4'd8,
+    AMO_MAX  = 4'd9,
+    AMO_MINU = 4'd10,
+    AMO_MAXU = 4'd11
 } amo_op_t;
 
 typedef enum logic [1:0] {
