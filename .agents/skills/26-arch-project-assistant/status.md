@@ -14,7 +14,7 @@ Update it whenever the current implementation stage or verified support boundary
 
 - Staged Fudan 26-Arch CPU project: simulation + Difftest + `ready-to-run/` tests + Vivado/board path.
 - Main student RTL lives under `vsrc/src/`; framework under `difftest/`, `vsrc/util/`.
-- Active milestone: **Refactor_TODO 1–7 complete** on `refactor/before_labplus`; ready to start lab+ feature work.
+- Active milestone: Lab+ feature work in progress; tasks 0–5 from `Doc/Lab+/TODO.md` are completed.
 
 ## Current implementation snapshot
 
@@ -27,19 +27,20 @@ Update it whenever the current implementation stage or verified support boundary
 - Bus path: `IBusToCBus` + `DBusToCBus` + `CBusArbiter` + `MMU` (MMU flushes walk on satp/priv change)
 - RV64M integer multiply/divide support is implemented in decode/ALU
 - Lab+2 performance counters are available with `make sim BENCHMARK=1`
+- Lab+2 static branch prediction is implemented for conditional branches: backward taken, forward not taken
 - Lab 1–6 behavior preserved after refactor
 
 ## Current validation snapshot
 
 | Target | Result |
 |--------|--------|
-| `make sim` | pass — after RV64M implementation |
+| `make sim` | pass — after static branch prediction |
 | Lab1 extra direct run | pass — `HIT GOOD TRAP at pc = 0x8002001c` |
 | `make test-lab4` | pass — post-refactor verified |
 | `make test-lab5` | pass — `Return from init! Test passed` |
 | `make test-lab6` | pass — `Privileged test finished.` / `Exit with code = 0` |
 | Lab+2 direct run | partial — no mismatch; default delay passes qsort/queen before 600s timeout, `DELAY=0` passes qsort/queen/bf before 600s timeout |
-| Lab+2 perf sample | pass — 50M-cycle sample IPC 0.181989, default not-taken branch direction accuracy ~19.5% |
+| Lab+2 perf sample | pass — 50M-cycle sample IPC 0.190101 after static branch prediction, branch prediction accuracy ~73.3% |
 | Lab+3 direct run | fail — Difftest mismatch at `pc = 0x80000028`, first `amoswap.w` unsupported |
 | Lab+4 direct run | fail — no-diff run exceeds cycle limit at `pc = 0x0` with explicit cycle cap |
 
@@ -57,8 +58,8 @@ Steps 1–7 from `Doc/Refactor_TODO.md` are done on branch `refactor/before_labp
 
 ## Likely next direction
 
-1. Implement simple branch prediction and compare against the Lab+2 performance baseline.
-2. Implement A extension minimal set (`amoswap.w`, `amoadd.w`, `lr.w`, `sc.w`) for Lab+3.
+1. Implement A extension minimal set (`amoswap.w`, `amoadd.w`, `lr.w`, `sc.w`) for Lab+3.
+2. Consider BHT/BTB only after Lab+3/Lab+4 functional baselines are improved.
 3. Implement PMP/access fault path for Lab+4 after M/A baselines are understood.
 4. Revisit IBus addr latch / CBus `saved_req` hold after lab+ with board regression if needed.
 

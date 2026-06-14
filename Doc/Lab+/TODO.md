@@ -19,7 +19,7 @@
 - `Makefile` 已有 `test-labplus-2/3/4` 目标。
 - `ready-to-run/lab+/` 已有 Lab+2/3/4 的 `.bin` 输入和对应反汇编文本。
 - `docs/report.md` 当前仍是 Lab6 报告，不是 Lab+ 报告。
-- 当前代码中未见 M 扩展乘除法、A 扩展原子指令、PMP 权限检查、page fault、分支预测、cache、完整 xv6 磁盘 MMIO 支持。
+- 当前代码已支持 RV64M 乘除法和第一阶段静态分支预测；仍未实现 A 扩展原子指令、PMP 权限检查、page fault、cache、完整 xv6 磁盘 MMIO 支持。
 
 ## 已完成记录
 
@@ -89,6 +89,26 @@
 - 当前结论：
   - 默认“不跳转预测”下分支方向正确率约 19.5%。
   - 控制流重定向和取指等待都很重，后续简单分支预测有明确优化价值。
+
+### 2026-06-14：完成任务 5
+
+- 分文档：`Doc/Lab+/labplus2_branch_prediction_report.md`。
+- 已实现静态分支预测：
+  - backward branch 预测 taken。
+  - forward branch 预测 not taken。
+  - 预测目标在 ID 阶段计算，EX 阶段判断误判并恢复。
+  - 暂未引入 BHT、BTB、RAS，也未提前处理 `jal/jalr`。
+- 50M cycle Lab+2 对比采样结果：
+  - `instr = 9,505,052`，相对任务 4 基线 `9,099,437` 提升约 4.46%。
+  - `IPC = 0.190101`，相对任务 4 基线 `0.181989` 提升约 4.46%。
+  - `pred_ok = 869,083`，`pred_miss = 315,950`，分支预测正确率约 73.3%。
+  - `ex_redirects = 734,777`，相对任务 4 基线 `1,313,944` 下降约 44.1%。
+- 已验证：
+  - `make sim`：构建通过。
+  - `make test-lab4`：通过，`HIT GOOD TRAP at pc = 0x8001fff8`。
+  - Lab+2 50M cycle 采样：无 Difftest mismatch，达到 cycle cap。
+  - `timeout 45s make test-lab5 || true`：输出 `Return from init! Test passed`。
+  - `make test-lab6`：输出 `Privileged test finished.` / `Exit with code = 0`。
 
 ## TODO 顺序
 
@@ -201,18 +221,19 @@
 - 产出：
   - 已形成报告中的性能基线数据。
 
-### 5. 实现简单分支预测
+### 5. 实现简单分支预测（已完成）
 
 - 成本：中到中高
 - 优先级：中
 - 依赖：任务 3、任务 4
 - 目标：完成 Lab+2 的“简单性能优化”方向，优先选择低风险方案。
 - 当前状态：
-  - 现在 PC 默认 `pc + 4`。
-  - branch/jal/jalr 在 EX 阶段决断。
-  - 没有 BTB、BHT、RAS。
+  - 已完成第一阶段静态预测：backward branch taken、forward branch not taken。
+  - branch 预测在 ID 阶段产生重定向，EX 阶段做实际结果校验和误判恢复。
+  - `jal/jalr` 仍在 EX 阶段决断。
+  - 暂无 BTB、BHT、RAS。
 - 推荐路线：
-  - 第一阶段：静态预测，例如 backward branch taken、forward branch not taken。
+  - 第一阶段：静态预测，例如 backward branch taken、forward branch not taken。（已完成）
   - 第二阶段：小型 BHT，两位饱和计数器。
   - 第三阶段：BTB 记录目标地址。
   - RAS 和 cache 暂不优先。
@@ -225,7 +246,7 @@
   - `make test-lab5`
   - `make test-lab6`
 - 产出：
-  - 优化前后 cycle/IPC/预测命中率对比。
+  - 已得到优化前后 cycle/IPC/预测命中率对比。
 
 ### 6. 实现 Lab+3 原子指令的最小集合
 
@@ -428,7 +449,7 @@
 ### 第二批：有明确测试目标
 
 - 任务 4：性能统计。（已完成）
-- 任务 5：简单分支预测。
+- 任务 5：简单分支预测。（已完成）
 - 任务 6：Lab+3 原子指令最小集合。
 - 任务 8：PMP 权限检查。
 
@@ -452,6 +473,6 @@
 
 ## 当前最推荐的下一步
 
-任务 0-4 已完成。下一步优先做任务 5：实现简单分支预测。
+任务 0-5 已完成。下一步优先做任务 6：实现 Lab+3 原子指令的最小集合。
 
-理由：50M cycle 采样显示默认“不跳转预测”的分支方向正确率约 19.5%，EX 控制流重定向超过 131 万次。简单分支预测有明确优化空间。
+理由：Lab+2 已完成 M 扩展、正确性推进、性能统计和第一阶段简单分支预测；继续投入动态预测/BTB 的边际收益不如先打通 Lab+3 的 A 扩展测试闭环。

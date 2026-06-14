@@ -309,6 +309,8 @@ typedef struct packed {
     logic      is_branch;
     logic      is_jump;
     logic      is_jalr;
+    logic      pred_taken;
+    u64        pred_target;
     logic      is_csr;
     logic      is_ecall;
     logic      is_mret;

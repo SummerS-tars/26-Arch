@@ -44,14 +44,17 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 	logic        fetch_wait_q, mem_wait_q;
 	logic        redirect_valid_ex, redirect_fire_ex;
 	logic [63:0] redirect_target_ex;
+	logic        pred_redirect_fire_id;
+	logic [63:0] pred_redirect_target_id;
 
 	assign next_pc = system_redirect_fire_wb ? system_redirect_target_wb :
-		(redirect_fire_ex ? redirect_target_ex : (pc + 64'd4));
+		(redirect_fire_ex ? redirect_target_ex :
+		 (pred_redirect_fire_id ? pred_redirect_target_id : (pc + 64'd4)));
 
 	always_ff @(posedge clk) begin
 		if (reset)
 			pc <= PCINIT;
-		else if (system_redirect_fire_wb || redirect_fire_ex || !stall)
+		else if (system_redirect_fire_wb || redirect_fire_ex || pred_redirect_fire_id || !stall)
 			pc <= next_pc;
 	end
 
@@ -64,7 +67,7 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 	logic        inst_valid_id;
 
 	always_ff @(posedge clk) begin
-		if (reset || system_redirect_fire_wb || redirect_fire_ex) begin
+		if (reset || system_redirect_fire_wb || redirect_fire_ex || pred_redirect_fire_id) begin
 			pc_id         <= 64'b0;
 			instr_id      <= 32'b0;
 			inst_valid_id <= 1'b0;
@@ -89,6 +92,8 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 	logic [63:0] csr_zimm_id;
 	logic        mem_read_id, mem_write_id, reg_write_id, is_illegal_id;
 	wb_sel_t     wb_sel_id;
+	logic        pred_taken_id;
+	logic [63:0] pred_target_id;
 
 	core_decode decode(
 		.instr      (instr_id),
@@ -119,6 +124,12 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 	assign csr_uses_imm_id = decode_id.csr_uses_imm;
 	assign csr_zimm_id  = decode_id.csr_zimm;
 	assign wb_sel_id    = decode_id.wb_sel;
+	assign pred_target_id = pc_id + imm_id;
+	assign pred_taken_id = inst_valid_id && is_branch_id && imm_id[63] &&
+		(pred_target_id[1:0] == 2'b00);
+	assign pred_redirect_target_id = pred_target_id;
+	assign pred_redirect_fire_id = pred_taken_id && !stall &&
+		!system_redirect_fire_wb && !redirect_fire_ex;
 
 	core_regfile regfile(
 		.clk      (clk),
@@ -167,6 +178,8 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 			id_ex_q.is_branch       <= is_branch_id;
 			id_ex_q.is_jump         <= is_jump_id;
 			id_ex_q.is_jalr         <= is_jalr_id;
+			id_ex_q.pred_taken      <= pred_taken_id;
+			id_ex_q.pred_target     <= pred_target_id;
 			id_ex_q.is_csr          <= is_csr_id;
 			id_ex_q.is_ecall        <= is_ecall_id;
 			id_ex_q.is_mret         <= is_mret_id;
@@ -206,7 +219,9 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 	logic [63:0] forward_data_mem;
 	logic [63:0] alu_result_ex;
 	logic [63:0] redirect_target_raw_ex;
+	logic [63:0] branch_next_pc_ex;
 	logic        control_target_misaligned_ex, mem_misaligned_ex;
+	logic        branch_mispredict_ex;
 	logic        exception_valid_ex_eff;
 	logic [63:0] exception_cause_ex_eff, exception_tval_ex_eff;
 	logic        branch_taken_ex;
@@ -313,7 +328,8 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 	assign redirect_target_raw_ex = id_ex_q.is_jalr ? (rs1_forwarded_ex + id_ex_q.imm) :
 		(id_ex_q.pc + id_ex_q.imm);
 	assign redirect_target_ex = id_ex_q.is_csr ? (id_ex_q.pc + 64'd4) :
-		(id_ex_q.is_jalr ? (redirect_target_raw_ex & ~64'd1) : redirect_target_raw_ex);
+		(id_ex_q.is_branch && !branch_taken_ex ? (id_ex_q.pc + 64'd4) :
+		 (id_ex_q.is_jalr ? (redirect_target_raw_ex & ~64'd1) : redirect_target_raw_ex));
 	assign control_target_misaligned_ex = id_ex_q.inst_valid &&
 		(id_ex_q.is_jump || (id_ex_q.is_branch && branch_taken_ex)) &&
 		(redirect_target_raw_ex[1:0] != 2'b00);
@@ -328,8 +344,12 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 		(mem_misaligned_ex ? alu_result_ex : id_ex_q.exception_tval);
 	assign system_event_ex = id_ex_q.inst_valid &&
 		(exception_valid_ex_eff || id_ex_q.is_ecall || id_ex_q.is_mret);
+	assign branch_next_pc_ex = branch_taken_ex ? redirect_target_ex : (id_ex_q.pc + 64'd4);
+	assign branch_mispredict_ex = id_ex_q.inst_valid && id_ex_q.is_branch &&
+		!exception_valid_ex_eff &&
+		(branch_next_pc_ex != (id_ex_q.pred_taken ? id_ex_q.pred_target : (id_ex_q.pc + 64'd4)));
 	assign redirect_valid_ex = id_ex_q.inst_valid && !exception_valid_ex_eff &&
-		(id_ex_q.is_csr || id_ex_q.is_jump || (id_ex_q.is_branch && branch_taken_ex));
+		(id_ex_q.is_csr || id_ex_q.is_jump || branch_mispredict_ex);
 	assign redirect_fire_ex = redirect_valid_ex && !fetch_wait && !mem_wait;
 
 	// ========== 7. EX_MEM Reg ==========
@@ -517,7 +537,8 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 	logic [63:0] perf_print_cnt;
 	logic [63:0] perf_branch_total, perf_branch_taken, perf_branch_nt_correct;
 	logic [63:0] perf_jump_total, perf_jalr_total;
-	logic [63:0] perf_ex_redirects, perf_system_redirects;
+	logic [63:0] perf_id_redirects, perf_ex_redirects, perf_system_redirects;
+	logic [63:0] perf_branch_pred_taken, perf_branch_pred_correct, perf_branch_mispredicts;
 	logic [63:0] perf_load_use_stalls, perf_fetch_waits, perf_mem_waits;
 	logic        perf_ex_fire;
 
@@ -531,8 +552,12 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 			perf_branch_nt_correct <= 64'b0;
 			perf_jump_total       <= 64'b0;
 			perf_jalr_total       <= 64'b0;
+			perf_id_redirects     <= 64'b0;
 			perf_ex_redirects     <= 64'b0;
 			perf_system_redirects <= 64'b0;
+			perf_branch_pred_taken <= 64'b0;
+			perf_branch_pred_correct <= 64'b0;
+			perf_branch_mispredicts <= 64'b0;
 			perf_load_use_stalls  <= 64'b0;
 			perf_fetch_waits      <= 64'b0;
 			perf_mem_waits        <= 64'b0;
@@ -543,6 +568,12 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 					perf_branch_taken <= perf_branch_taken + 64'd1;
 				else
 					perf_branch_nt_correct <= perf_branch_nt_correct + 64'd1;
+				if (id_ex_q.pred_taken)
+					perf_branch_pred_taken <= perf_branch_pred_taken + 64'd1;
+				if (branch_mispredict_ex)
+					perf_branch_mispredicts <= perf_branch_mispredicts + 64'd1;
+				else
+					perf_branch_pred_correct <= perf_branch_pred_correct + 64'd1;
 			end
 
 			if (perf_ex_fire && id_ex_q.is_jump && !exception_valid_ex_eff) begin
@@ -551,6 +582,8 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 					perf_jalr_total <= perf_jalr_total + 64'd1;
 			end
 
+			if (pred_redirect_fire_id)
+				perf_id_redirects <= perf_id_redirects + 64'd1;
 			if (redirect_fire_ex)
 				perf_ex_redirects <= perf_ex_redirects + 64'd1;
 			if (system_redirect_fire_wb)
@@ -564,15 +597,19 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 
 			if (`BENCHMARK) begin
 				if (perf_print_cnt == PERF_PRINT_PERIOD - 64'd1) begin
-					$display("[perf] cycles=%0d instr=%0d ipc_x1000=%0d branches=%0d taken=%0d nt_pred_ok=%0d jumps=%0d jalr=%0d ex_redirects=%0d system_redirects=%0d load_use_stalls=%0d fetch_waits=%0d mem_waits=%0d",
+					$display("[perf] cycles=%0d instr=%0d ipc_x1000=%0d branches=%0d taken=%0d nt_pred_ok=%0d pred_taken=%0d pred_ok=%0d pred_miss=%0d jumps=%0d jalr=%0d id_redirects=%0d ex_redirects=%0d system_redirects=%0d load_use_stalls=%0d fetch_waits=%0d mem_waits=%0d",
 						cycle_cnt,
 						instr_cnt,
 						(cycle_cnt == 64'b0) ? 64'b0 : ((instr_cnt * 64'd1000) / cycle_cnt),
 						perf_branch_total,
 						perf_branch_taken,
 						perf_branch_nt_correct,
+						perf_branch_pred_taken,
+						perf_branch_pred_correct,
+						perf_branch_mispredicts,
 						perf_jump_total,
 						perf_jalr_total,
+						perf_id_redirects,
 						perf_ex_redirects,
 						perf_system_redirects,
 						perf_load_use_stalls,
