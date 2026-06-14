@@ -17,8 +17,7 @@ Use the repository `Makefile` flow by default.
 - `make test-lab3`: run the Lab3 test
 - `make test-lab4`: run the Lab4 CSR / privilege-visible state test
 - `timeout 25s make test-lab5 || true`: run the Lab5 kernel regression; success is determined by the kernel success line because the image may continue running
-- `make test-lab6`: run the Lab6 no-diff privileged exception/interrupt test
-- `TEST=sys ./build/emu --no-diff -i ./ready-to-run/lab6/lab6-test.bin -C 8000000 --force-dump-result`: direct Lab6 run with an explicit cycle cap
+- `TEST=sys ./build/emu --no-diff -i ./ready-to-run/lab6/lab6-test.bin -C 8000000 --force-dump-result`: run the Lab6 no-diff privileged exception/interrupt test with an explicit cycle cap
 - `make handin`: package submission assets
 
 If these commands change in the future, update this file before changing the main skill.

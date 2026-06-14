@@ -47,6 +47,8 @@ module core_csr
     output u64        sscratch,
     output u64        mideleg,
     output u64        medeleg,
+    output u64        pmpaddr0,
+    output u64        pmpcfg0,
     output u64        mcycle,
     output u64        mhartid
 );
@@ -314,6 +316,8 @@ module core_csr
     assign sscratch = sscratch_view;
     assign mideleg  = mideleg_view;
     assign medeleg  = medeleg_view;
+    assign pmpaddr0 = pmpaddr0_q;
+    assign pmpcfg0  = pmpcfg0_q;
     assign mcycle   = mcycle_q;
     assign mhartid  = 64'b0;
 endmodule

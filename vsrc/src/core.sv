@@ -33,10 +33,55 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 	logic [63:0] csr_trap_mepc_wb, csr_trap_mcause_wb, csr_trap_mtval_wb;
 	logic        csr_write_wb_fire;
 	priv_mode_t  priv_mode_q, priv_mode_view, csr_mret_priv;
+	logic [63:0] csr_pmpaddr0, csr_pmpcfg0;
 
 	id_ex_t  id_ex_q;
 	ex_mem_t ex_mem_q;
 	mem_wb_t mem_wb_q;
+
+	function automatic logic [61:0] pmp_napot_low_mask(input logic [63:0] pmpaddr);
+		logic scanning;
+		begin
+			pmp_napot_low_mask = 62'b0;
+			scanning = 1'b1;
+			for (int i = 0; i < 62; i++) begin
+				if (scanning && pmpaddr[i])
+					pmp_napot_low_mask[i] = 1'b1;
+				else
+					scanning = 1'b0;
+			end
+		end
+	endfunction
+
+	function automatic logic pmp_napot_match(
+		input logic [63:0] addr,
+		input logic [63:0] pmpaddr
+	);
+		logic [61:0] low_mask;
+		begin
+			low_mask = pmp_napot_low_mask(pmpaddr);
+			pmp_napot_match = ((addr[63:2] & ~low_mask) == (pmpaddr[61:0] & ~low_mask));
+		end
+	endfunction
+
+	function automatic logic pmp_access_fault(
+		input priv_mode_t   priv,
+		input logic [63:0] addr,
+		input logic [63:0] pmpaddr,
+		input logic [63:0] pmpcfg,
+		input logic        need_read,
+		input logic        need_write,
+		input logic        need_exec
+	);
+		logic [7:0] cfg;
+		logic       matched;
+		begin
+			cfg = pmpcfg[7:0];
+			matched = (cfg[4:3] == 2'b11) && pmp_napot_match(addr, pmpaddr);
+			pmp_access_fault = (priv != PRIV_M) && matched &&
+				((need_read && !cfg[0]) || (need_write && !cfg[1]) || (need_exec && !cfg[2]));
+		end
+	endfunction
 
 	// ========== 2. PC & IF ==========
 	logic [63:0] pc, next_pc;
@@ -46,6 +91,7 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 	logic [63:0] redirect_target_ex;
 	logic        pred_redirect_fire_id;
 	logic [63:0] pred_redirect_target_id;
+	logic        pmp_inst_access_fault_if;
 
 	assign next_pc = system_redirect_fire_wb ? system_redirect_target_wb :
 		(redirect_fire_ex ? redirect_target_ex :
@@ -58,23 +104,28 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 			pc <= next_pc;
 	end
 
-	assign ireq.valid = ~load_use_hazard && !mem_access_mem;
+	assign pmp_inst_access_fault_if = pmp_access_fault(
+		priv_mode_q, pc, csr_pmpaddr0, csr_pmpcfg0, 1'b0, 1'b0, 1'b1
+	);
+	assign ireq.valid = ~load_use_hazard && !mem_access_mem && !pmp_inst_access_fault_if;
 	assign ireq.addr  = pc;
 
 	// ========== 3. IF_ID Reg ==========
 	logic [63:0] pc_id;
 	logic [31:0] instr_id;
-	logic        inst_valid_id;
+	logic        inst_valid_id, inst_access_fault_id;
 
 	always_ff @(posedge clk) begin
 		if (reset || system_redirect_fire_wb || redirect_fire_ex || pred_redirect_fire_id) begin
 			pc_id         <= 64'b0;
 			instr_id      <= 32'b0;
 			inst_valid_id <= 1'b0;
+			inst_access_fault_id <= 1'b0;
 		end else if (!stall) begin
 			pc_id         <= pc;
-			instr_id      <= iresp.data;
-			inst_valid_id <= iresp.data_ok;
+			instr_id      <= pmp_inst_access_fault_if ? 32'b0 : iresp.data;
+			inst_valid_id <= pmp_inst_access_fault_if || iresp.data_ok;
+			inst_access_fault_id <= pmp_inst_access_fault_if;
 		end
 	end
 
@@ -178,9 +229,9 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 			id_ex_q.mem_read        <= mem_read_id;
 			id_ex_q.mem_write       <= mem_write_id;
 			id_ex_q.reg_write       <= reg_write_id;
-			id_ex_q.exception_valid <= inst_valid_id && is_illegal_id;
-			id_ex_q.exception_cause <= CAUSE_ILLEGAL_INST;
-			id_ex_q.exception_tval  <= 64'b0;
+			id_ex_q.exception_valid <= inst_valid_id && (inst_access_fault_id || is_illegal_id);
+			id_ex_q.exception_cause <= inst_access_fault_id ? CAUSE_INST_ACCESS : CAUSE_ILLEGAL_INST;
+			id_ex_q.exception_tval  <= inst_access_fault_id ? pc_id : 64'b0;
 			id_ex_q.is_branch       <= is_branch_id;
 			id_ex_q.is_jump         <= is_jump_id;
 			id_ex_q.is_jalr         <= is_jalr_id;
@@ -231,6 +282,7 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 	logic [63:0] redirect_target_raw_ex;
 	logic [63:0] branch_next_pc_ex;
 	logic        control_target_misaligned_ex, mem_misaligned_ex;
+	logic        pmp_load_access_fault_ex, pmp_store_access_fault_ex;
 	logic        branch_mispredict_ex;
 	logic        exception_valid_ex_eff;
 	logic [63:0] exception_cause_ex_eff, exception_tval_ex_eff;
@@ -279,6 +331,8 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 		.sscratch  (csr_sscratch),
 		.mideleg   (csr_mideleg),
 		.medeleg   (csr_medeleg),
+		.pmpaddr0  (csr_pmpaddr0),
+		.pmpcfg0   (csr_pmpcfg0),
 		.mcycle    (csr_mcycle),
 		.mhartid   (csr_mhartid)
 	);
@@ -346,13 +400,24 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 	assign mem_misaligned_ex = id_ex_q.inst_valid &&
 		(id_ex_q.mem_read || id_ex_q.mem_write || id_ex_q.is_amo) &&
 		mem_addr_misaligned(alu_result_ex, mem_size_from_funct3(id_ex_q.funct3));
+	assign pmp_load_access_fault_ex = id_ex_q.inst_valid && !id_ex_q.exception_valid &&
+		(id_ex_q.mem_read || id_ex_q.is_lr) &&
+		pmp_access_fault(priv_mode_q, alu_result_ex, csr_pmpaddr0, csr_pmpcfg0, 1'b1, 1'b0, 1'b0);
+	assign pmp_store_access_fault_ex = id_ex_q.inst_valid && !id_ex_q.exception_valid &&
+		(id_ex_q.mem_write || id_ex_q.is_sc || (id_ex_q.is_amo && !id_ex_q.is_lr)) &&
+		pmp_access_fault(
+			priv_mode_q, alu_result_ex, csr_pmpaddr0, csr_pmpcfg0,
+			id_ex_q.is_amo && !id_ex_q.is_sc, 1'b1, 1'b0
+		);
 	assign exception_valid_ex_eff = id_ex_q.exception_valid || control_target_misaligned_ex ||
-		mem_misaligned_ex;
+		mem_misaligned_ex || pmp_load_access_fault_ex || pmp_store_access_fault_ex;
 	assign exception_cause_ex_eff = control_target_misaligned_ex ? CAUSE_INST_MISALIGNED :
 		(mem_misaligned_ex ? ((id_ex_q.mem_read && !id_ex_q.is_sc) ? CAUSE_LOAD_MISALIGNED : CAUSE_STORE_MISALIGNED) :
-		 id_ex_q.exception_cause);
+		 (pmp_load_access_fault_ex ? CAUSE_LOAD_ACCESS :
+		  (pmp_store_access_fault_ex ? CAUSE_STORE_ACCESS : id_ex_q.exception_cause)));
 	assign exception_tval_ex_eff = control_target_misaligned_ex ? redirect_target_raw_ex :
-		(mem_misaligned_ex ? alu_result_ex : id_ex_q.exception_tval);
+		((mem_misaligned_ex || pmp_load_access_fault_ex || pmp_store_access_fault_ex) ?
+		 alu_result_ex : id_ex_q.exception_tval);
 	assign system_event_ex = id_ex_q.inst_valid &&
 		(exception_valid_ex_eff || id_ex_q.is_ecall || id_ex_q.is_mret);
 	assign branch_next_pc_ex = branch_taken_ex ? redirect_target_ex : (id_ex_q.pc + 64'd4);

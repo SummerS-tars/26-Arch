@@ -19,7 +19,7 @@
 - `Makefile` 已有 `test-labplus-2/3/4` 目标。
 - `ready-to-run/lab+/` 已有 Lab+2/3/4 的 `.bin` 输入和对应反汇编文本。
 - `docs/report.md` 当前仍是 Lab6 报告，不是 Lab+ 报告。
-- 当前代码已支持 RV64M 乘除法、第一阶段静态分支预测，以及 Lab+3 需要的 A 扩展最小集合；仍未实现 PMP 权限检查、page fault、cache、完整 xv6 磁盘 MMIO 支持。
+- 当前代码已支持 RV64M 乘除法、第一阶段静态分支预测、Lab+3 需要的 LR/SC、完整 32-bit AMO RMW 指令，以及 `pmpaddr0/pmpcfg0` entry0 NAPOT R/W/X 权限检查；仍未实现 page fault、cache、完整 xv6 磁盘 MMIO 支持。
 
 ## 已完成记录
 
@@ -151,6 +151,24 @@
   - `make test-lab4`：通过，`HIT GOOD TRAP at pc = 0x8001fff8`。
   - `timeout 45s make test-lab5 || true`：输出 `Return from init! Test passed`。
   - `make test-lab6`：输出 `Privileged test finished.` / `Exit with code = 0`；命令随后被用户中断，但成功标志已出现。
+
+### 2026-06-14：完成任务 8
+
+- 分文档：`Doc/Lab+/labplus4_pmp_report.md`。
+- 已实现 `pmpaddr0/pmpcfg0` entry0 的 NAPOT 区域权限检查：
+  - CSR 模块导出 `pmpaddr0` / `pmpcfg0`。
+  - `pmpcfg0[7:0]` 按 R/W/X 和 `A=NAPOT` 解析。
+  - U/S-mode 取指无 X 权限时产生 instruction access fault。
+  - U/S-mode load 无 R 权限时产生 load access fault。
+  - U/S-mode store/AMO 无 W 权限时产生 store/AMO access fault。
+  - M-mode 默认不受该 entry 限制；暂不实现 TOR/NA4/L-bit。
+- 已验证：
+  - `make sim`：构建通过。
+  - Lab+4 no-diff 直连运行：通过前置特权/PMP 子测，输出 `Single test passed.`；零延迟 80M cycle cap 下继续跑过 paint、compress、coremark、dhrystone、stream，停在 conway 后续负载，未再出现 PMP/access fault 失败。
+  - Lab+3：通过，`HIT GOOD TRAP at pc = 0x800000dc`。
+  - Lab4：通过，`HIT GOOD TRAP at pc = 0x8001fff8`。
+  - Lab5：输出 `Return from init! Test passed`。
+  - Lab6：输出 `Privileged test finished.` / `Exit with code = 0`，采用显式 cycle cap，避免命令长时间占住终端。
 
 ## TODO 顺序
 
@@ -341,33 +359,32 @@
 - 产出：
   - 已形成更完整的 A 扩展说明。
 
-### 8. 实现 PMP 权限检查
+### 8. 实现 PMP 权限检查（已完成）
 
 - 成本：中高
 - 优先级：中低
 - 依赖：任务 0、现有 CSR 基础
 - 目标：从“PMP CSR 可读写”升级为“PMP 真正参与取指/访存权限判断”。
 - 当前状态：
-  - `core_csr.sv` 已保存 `pmpaddr0_q`、`pmpcfg0_q`。
-  - 取指、load、store 路径未见 PMP check。
-  - `trap.sv` 未见 instruction/load/store access fault cause。
-  - Lab+4 中有 `pmp_nr`、`pmp_nw`、`pmp_nx` 相关测试。
+  - `core_csr.sv` 已保存并导出 `pmpaddr0_q`、`pmpcfg0_q`。
+  - `trap.sv` 已补齐 instruction/load/store access fault cause。
+  - `core.sv` 已实现 `pmpaddr0/pmpcfg0` entry0 NAPOT 区域匹配。
+  - 已按 R/W/X 权限检查 U/S-mode fetch、load、store/AMO。
+  - Lab+4 中 `pmp_nr`、`pmp_nw`、`pmp_nx` 所在前置特权/PMP 子测已通过。
 - 要做：
-  - 从 CSR 模块导出 `pmpaddr0/pmpcfg0`。
-  - 实现至少 `pmpaddr0` + `pmpcfg0` 对应的权限区域。
-  - 根据 R/W/X 权限分别检查 load/store/fetch。
-  - 违规时产生 access fault：
+  - 已从 CSR 模块导出 `pmpaddr0/pmpcfg0`。
+  - 已实现 `pmpaddr0` + `pmpcfg0` 对应的 NAPOT 权限区域。
+  - 已根据 R/W/X 权限分别检查 load/store/fetch。
+  - 违规时已产生 access fault：
     - instruction access fault
     - load access fault
     - store/AMO access fault
-  - 设置正确的 `mcause` 和 `mtval`。
+  - 已设置对应的 `mcause` 和 `mtval`。
 - 验证：
-  - `make test-labplus-4`
-  - `make test-lab4`
-  - `make test-lab5`
-  - `make test-lab6`
+  - Lab+4 no-diff 直连运行：输出 `Single test passed.`；80M cycle cap 下后续性能负载仍未完整结束。
+  - Lab+3、Lab4、Lab5、Lab6 回归通过关键成功线。
 - 产出：
-  - PMP Bonus 的核心报告材料。
+  - PMP Bonus 的核心报告材料：`Doc/Lab+/labplus4_pmp_report.md`。
 
 ### 9. 实现 MMU page fault
 
@@ -516,6 +533,6 @@
 
 ## 当前最推荐的下一步
 
-任务 0-7 已完成。下一步优先做任务 8：实现 PMP 权限检查。
+任务 0-8 已完成。下一步优先做任务 9：实现 MMU page fault。
 
-理由：Lab+3 的最小 A 扩展和完整 32-bit AMO RMW 指令均已完成；PMP/access fault 是推进 Lab+4 的关键阻塞。
+理由：PMP/access fault 的前置阻塞已解除；若继续推进 Lab+4/Lab5/Lab6 的异常完整性，page fault 是更关键的剩余缺口。

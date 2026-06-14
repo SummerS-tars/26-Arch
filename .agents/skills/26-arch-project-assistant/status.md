@@ -8,13 +8,13 @@ Update it whenever the current implementation stage or verified support boundary
 ## Last checked
 
 - Date: 2026-06-14
-- Method: Refactor_TODO steps 1–7 + Lab4/Lab5/Lab6 recorded regression + Lab+ baseline runs
+- Method: Refactor_TODO steps 1–7 + Lab+ tasks 0–8 + Lab4/Lab5/Lab6 recorded regression + Lab+ baseline runs
 
 ## Current project understanding
 
 - Staged Fudan 26-Arch CPU project: simulation + Difftest + `ready-to-run/` tests + Vivado/board path.
 - Main student RTL lives under `vsrc/src/`; framework under `difftest/`, `vsrc/util/`.
-- Active milestone: Lab+ feature work in progress; tasks 0–7 from `Doc/Lab+/TODO.md` are completed.
+- Active milestone: Lab+ feature work in progress; tasks 0–8 from `Doc/Lab+/TODO.md` are completed.
 
 ## Current implementation snapshot
 
@@ -29,13 +29,14 @@ Update it whenever the current implementation stage or verified support boundary
 - Lab+2 performance counters are available with `make sim BENCHMARK=1`
 - Lab+2 static branch prediction is implemented for conditional branches: backward taken, forward not taken
 - Lab+3 A extension support covers `lr.w`, `sc.w`, and all 32-bit AMO RMW ops
+- Lab+4 PMP support covers `pmpaddr0/pmpcfg0` entry0 NAPOT R/W/X checks for U/S-mode fetch/load/store/AMO
 - Lab 1–6 behavior preserved after refactor
 
 ## Current validation snapshot
 
 | Target | Result |
 |--------|--------|
-| `make sim` | pass — after full 32-bit AMO W implementation |
+| `make sim` | pass — after PMP entry0 NAPOT implementation |
 | Lab1 extra direct run | pass — `HIT GOOD TRAP at pc = 0x8002001c` |
 | `make test-lab4` | pass — post-refactor verified |
 | `make test-lab5` | pass — `Return from init! Test passed` |
@@ -44,7 +45,7 @@ Update it whenever the current implementation stage or verified support boundary
 | Lab+2 perf sample | pass — 50M-cycle sample IPC 0.190101 after static branch prediction, branch prediction accuracy ~73.3% |
 | Lab+3 direct run | pass — `HIT GOOD TRAP at pc = 0x800000dc` |
 | Lab+3 full AMO W self-test | pass — `HIT GOOD TRAP at pc = 0x800001c4` |
-| Lab+4 direct run | fail — no-diff run exceeds cycle limit at `pc = 0x0` with explicit cycle cap |
+| Lab+4 direct run | pass for front privileged/PMP phase — `Single test passed.`; zero-delay 80M-cycle run proceeds through paint/compress/coremark/dhrystone/stream and stops later in conway due cycle cap |
 
 ## Refactor boundary (completed)
 
@@ -60,8 +61,8 @@ Steps 1–7 from `Doc/Refactor_TODO.md` are done on branch `refactor/before_labp
 
 ## Likely next direction
 
-1. Implement PMP/access fault path for Lab+4.
-2. Consider BHT/BTB only after Lab+4 functional baseline is improved.
+1. Implement MMU page fault path for Lab+5/Lab+6 completeness.
+2. Consider BHT/BTB only after functional Lab+ exception work is improved.
 3. Consider 64-bit AMO D only if the bonus scope explicitly needs it.
 4. Revisit IBus addr latch / CBus `saved_req` hold after lab+ with board regression if needed.
 

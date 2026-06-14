@@ -10,9 +10,12 @@ package trap_pkg;
 
   parameter logic [31:0] TRAP_INST = 32'h0005006b;
   parameter logic [63:0] CAUSE_INST_MISALIGNED  = 64'd0;
+  parameter logic [63:0] CAUSE_INST_ACCESS      = 64'd1;
   parameter logic [63:0] CAUSE_ILLEGAL_INST     = 64'd2;
   parameter logic [63:0] CAUSE_LOAD_MISALIGNED  = 64'd4;
+  parameter logic [63:0] CAUSE_LOAD_ACCESS      = 64'd5;
   parameter logic [63:0] CAUSE_STORE_MISALIGNED = 64'd6;
+  parameter logic [63:0] CAUSE_STORE_ACCESS     = 64'd7;
   parameter logic [63:0] CAUSE_ECALL_U          = 64'd8;
   parameter logic [63:0] CAUSE_ECALL_S          = 64'd9;
   parameter logic [63:0] CAUSE_ECALL_M          = 64'd11;
