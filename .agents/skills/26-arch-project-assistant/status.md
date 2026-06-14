@@ -37,7 +37,7 @@ Update it whenever the current implementation stage or verified support boundary
 | `make test-lab4` | pass — post-refactor verified |
 | `make test-lab5` | pass — `Return from init! Test passed` |
 | `make test-lab6` | pass — `Privileged test finished.` / `Exit with code = 0` |
-| Lab+2 direct run | partial — qsort passed; 90s wall timeout during queen |
+| Lab+2 direct run | partial — no mismatch; default delay passes qsort/queen before 600s timeout, `DELAY=0` passes qsort/queen/bf before 600s timeout |
 | Lab+3 direct run | fail — Difftest mismatch at `pc = 0x80000028`, first `amoswap.w` unsupported |
 | Lab+4 direct run | fail — no-diff run exceeds cycle limit at `pc = 0x0` with explicit cycle cap |
 
@@ -55,7 +55,7 @@ Steps 1–7 from `Doc/Refactor_TODO.md` are done on branch `refactor/before_labp
 
 ## Likely next direction
 
-1. Continue Lab+2 microbench: determine whether queen timeout is performance-only or a new correctness issue.
+1. Add lightweight Lab+2 performance counters before implementing prediction/cache.
 2. Implement A extension minimal set (`amoswap.w`, `amoadd.w`, `lr.w`, `sc.w`) for Lab+3.
 3. Implement PMP/access fault path for Lab+4 after M/A baselines are understood.
 4. Revisit IBus addr latch / CBus `saved_req` hold after lab+ with board regression if needed.

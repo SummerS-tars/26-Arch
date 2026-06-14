@@ -52,6 +52,17 @@
   - Lab6 直连运行：通过，输出 `Privileged test finished.` / `Exit with code = 0`。
   - Lab+2 直连运行：已越过原先 `mulw` mismatch，`qsort` 显示 `* Passed.`；后续在 `queen` 阶段因 90 秒 wall timeout 停止，留给任务 3 继续处理。
 
+### 2026-06-14：完成任务 3
+
+- 分文档：`Doc/Lab+/labplus2_microbench_report.md`。
+- 已确认 Lab+2 的首个正确性阻塞已经清除：
+  - 默认随机延迟下，600 秒内未出现 Difftest mismatch，`qsort`、`queen` 通过，停在 `bf`。
+  - 使用 `make sim DELAY=0` 关闭仿真 RAM 随机等待后，600 秒内未出现 Difftest mismatch，`qsort`、`queen`、`bf` 通过，停在 `fib`。
+- 当前结论：
+  - microbench 已能正确进入并连续通过多个 benchmark。
+  - 尚未完整跑完 `ref` 输入，主要瓶颈是现有 CPU 缺少性能优化。
+  - 后续应进入任务 4/5，先做性能统计，再考虑分支预测。
+
 ## TODO 顺序
 
 ### 0. 确认 Lab+ 测试输入并建立失败基线（已完成）
@@ -118,7 +129,7 @@
 - 产出：
   - 可在 Lab+ 报告中明确写“实现乘除法 Bonus”。
 
-### 3. 让 Lab+2 microbench 先正确跑起来
+### 3. 让 Lab+2 microbench 先正确跑起来（阶段完成）
 
 - 成本：中
 - 优先级：高
@@ -128,16 +139,18 @@
   - 仿真 RAM 已有 UART、CLINT timer 等基础 MMIO。
   - CPU 已有五级流水线、hazard、forwarding。
   - 尚未实现专门性能优化。
-  - microbench 可能依赖 M 扩展指令。
+  - microbench 依赖的 M 扩展指令已实现。
+  - Lab+2 已在 Difftest 下连续通过 `qsort`、`queen`、`bf`，没有出现新的正确性 mismatch。
 - 要做：
-  - 在补齐 `.bin` 后运行 `make test-labplus-2`。
-  - 若失败，先处理正确性问题，例如 M 扩展、MMIO、CSR 或访存问题。
-  - 不急于加入分支预测或 cache。
+  - 已运行 Lab+2。
+  - 已确认原先的 M 扩展正确性失败已消除。
+  - 已确认当前主要问题是运行时间过长，不急于在本任务中加入分支预测或 cache。
 - 验证：
-  - `make test-labplus-2`
+  - 默认随机延迟直连运行：`qsort`、`queen` 通过，600 秒停在 `bf`。
+  - `DELAY=0` 直连运行：`qsort`、`queen`、`bf` 通过，600 秒停在 `fib`。
 - 产出：
-  - microbench 是否能完成的记录。
-  - 后续性能优化前的 IPC 或 cycle 基线。
+  - 已形成 microbench 正确性基线记录。
+  - 完整 IPC/cycle 性能基线留给任务 4。
 
 ### 4. 增加轻量性能统计
 
@@ -378,7 +391,7 @@
 - 任务 0：确认测试输入和失败基线。（已完成）
 - 任务 1：整理已有 Bonus 材料。（已完成）
 - 任务 2：实现 M 扩展乘除法。（已完成）
-- 任务 3：让 microbench 先正确跑起来。
+- 任务 3：让 microbench 先正确跑起来。（阶段完成）
 
 目标：快速形成 Lab+ 报告基础，并争取拿到乘除法和 microbench 正确性进展。
 
@@ -409,6 +422,6 @@
 
 ## 当前最推荐的下一步
 
-任务 0-2 已完成。下一步优先做任务 3：让 Lab+2 microbench 完整跑起来。
+任务 0-3 已完成。下一步优先做任务 4：增加轻量性能统计。
 
-理由：M 扩展完成后，Lab+2 已经从 `mulw` mismatch 推进到 qsort 通过。后续需要判断 `queen` 阶段是单纯运行时间较长，还是仍有新的正确性/性能阻塞点。
+理由：Lab+2 已经不再卡在正确性 mismatch，默认随机延迟和零随机延迟下都能连续通过多个 benchmark。剩余问题是运行时间过长，需要先量化分支、跳转、flush 等性能数据，再决定是否做分支预测。
