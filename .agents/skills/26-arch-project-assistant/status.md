@@ -8,13 +8,13 @@ Update it whenever the current implementation stage or verified support boundary
 ## Last checked
 
 - Date: 2026-06-14
-- Method: Refactor_TODO steps 1–7 + Lab+ tasks 0–10 + Lab4/Lab5/Lab6 recorded regression + Lab+ baseline runs
+- Method: Refactor_TODO steps 1–7 + Lab+ tasks 0–11 attempt + Lab4/Lab5/Lab6 recorded regression + Lab+ baseline runs
 
 ## Current project understanding
 
 - Staged Fudan 26-Arch CPU project: simulation + Difftest + `ready-to-run/` tests + Vivado/board path.
 - Main student RTL lives under `vsrc/src/`; framework under `difftest/`, `vsrc/util/`.
-- Active milestone: Lab+ feature work in progress; tasks 0–10 from `Doc/Lab+/TODO.md` are completed.
+- Active milestone: Lab+ feature work in progress; tasks 0–10 from `Doc/Lab+/TODO.md` are completed; task 11 has a documented startup attempt / gap analysis.
 
 ## Current implementation snapshot
 
@@ -32,6 +32,7 @@ Update it whenever the current implementation stage or verified support boundary
 - Lab+4 PMP support covers `pmpaddr0/pmpcfg0` entry0 NAPOT R/W/X checks for U/S-mode fetch/load/store/AMO
 - MMU page fault core path is implemented for Sv39 invalid PTE, R/W/X/A/D checks, basic U-mode checks, and fault feedback to core
 - S-mode trap/delegation/`sret` core path is implemented: delegated traps write `sepc/scause/stval`, redirect to `stvec`, and `sret` restores `SPP/SPIE/SIE`
+- Full xv6 main Track has been scoped: current repo has only the Lab5 trimmed kernel, no full xv6 source/image or `fs.img`, and no RAMHelper block device/RAM-disk path yet
 - Lab 1–6 behavior preserved after refactor
 
 ## Current validation snapshot
@@ -44,6 +45,7 @@ Update it whenever the current implementation stage or verified support boundary
 | `make test-lab5` | pass — `Return from init! Test passed` |
 | `make test-lab5-extra` | pass — `HIT GOOD TRAP at pc = 0x800002b4`, covers delegated U-mode ecall to S trap and `sret` return |
 | `make test-lab6` | pass — `Privileged test finished.` / `Exit with code = 0` |
+| Lab+11 xv6 attempt | scoped — existing Lab5 trimmed kernel reaches `xv6 kernel is booting` / `Return from init! Test passed`; full shell is blocked by missing full xv6 image/source and block device/RAM-disk support |
 | Lab+2 direct run | partial — no mismatch; default delay passes qsort/queen before 600s timeout, `DELAY=0` passes qsort/queen/bf before 600s timeout |
 | Lab+2 perf sample | pass — 50M-cycle sample IPC 0.190101 after static branch prediction, branch prediction accuracy ~73.3% |
 | Lab+3 direct run | pass — `HIT GOOD TRAP at pc = 0x800000dc` |
@@ -65,8 +67,8 @@ Steps 1–7 from `Doc/Refactor_TODO.md` are done on branch `refactor/before_labp
 
 ## Likely next direction
 
-1. Try the full xv6 main Track only after deciding how to handle block device/MMIO.
-2. Polish the standalone page-fault no-diff self-test harness if a clean GOOD TRAP artifact is desired.
+1. Continue full xv6 only after providing/importing modifiable xv6 source plus a filesystem image; prefer RAM disk before virtio-mmio.
+2. If staying within current repo inputs, move to cache/performance work or polish page-fault no-diff self-tests.
 3. Refine full S-level interrupt priority/pending and SUM/MXR/TSR/TW/TVM semantics if aiming beyond the current core S-mode trap path.
 4. Consider BHT/BTB or 64-bit AMO D only if the bonus scope explicitly needs them.
 

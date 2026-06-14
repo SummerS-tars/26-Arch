@@ -216,6 +216,26 @@
   - 暂未完整实现 `SUM/MXR` 对 MMU 权限的影响。
   - `mideleg` 路径已接入，但现有硬件中断源仍以 machine interrupt cause 为主，完整 S-level interrupt pending/priority 可后续细化。
 
+### 2026-06-14：完成任务 11 启动尝试
+
+- 分文档：`Doc/Lab+/labplus_xv6_main_track_report.md`。
+- 已按“只基于仓库现有内容 + RAM disk 优先方向”完成一次完整 xv6 主 Track 启动尝试和缺口定位：
+  - 当前仓库未发现完整 xv6 源码、完整 `kernel.bin` 或 `fs.img`。
+  - `Makefile` 无完整 xv6 target；最接近入口是 `make test-lab5` 的裁剪内核和 `make test-lab5-extra` 的 S-mode 小测。
+  - `ready-to-run/lab5/kernel.asm` 未见 `virtio` / `disk` / `fsinit` / `bread` / `bwrite` / `binit` 等完整文件系统路径。
+  - `plicinit()` 是空实现，`initcode` 仅触发自定义 `SYS_INIT` 并打印 `Return from init! Test passed`。
+  - `RAMHelper2` 当前只支持 RAM、UART、CLINT 和测试寄存器；未接入 xv6 可用块设备或 RAM disk。
+  - `sdcard.cpp` 有 C++ 桩，但 `SDCARD_IMAGE` 默认注释，且没有 RTL/DPI 地址解码接入。
+- 已验证护栏：
+  - `make sim`：构建通过。
+  - Lab5：输出 `xv6 kernel is booting` 和 `Return from init! Test passed`。
+  - Lab5 extra：`HIT GOOD TRAP at pc = 0x800002b4`。
+  - Lab6：输出 `Privileged test finished.` / `Exit with code = 0`。
+  - Lab+3：`HIT GOOD TRAP at pc = 0x800000dc`。
+- 结论：
+  - 当前仓库可以稳定运行裁剪 xv6，但没有足够软件和块设备条件直接进入完整 xv6 shell。
+  - 后续若继续推进，建议先提供/引入可修改 xv6 源码，再做 RAM disk 驱动与镜像加载；暂不优先实现完整 virtio-mmio。
+
 ## TODO 顺序
 
 ### 0. 确认 Lab+ 测试输入并建立失败基线（已完成）
@@ -480,7 +500,7 @@
 - 产出：
   - 特权架构扩展说明：`Doc/Lab+/labplus_smode_trap_report.md`。
 
-### 11. 尝试完整 xv6 主 Track
+### 11. 尝试完整 xv6 主 Track（已完成启动尝试与缺口定位）
 
 - 成本：很高
 - 优先级：低
@@ -488,20 +508,20 @@
 - 目标：让 difftest 环境下输出 xv6 启动信息并尽量进入用户终端。
 - 当前状态：
   - Lab5 已能跑课程裁剪内核。
+  - 已确认仓库内没有完整 xv6 源码、完整 `kernel.bin` 或 `fs.img`。
   - 未见 virtio 或磁盘 MMIO 支持。
   - difftest 侧有 sdcard 相关代码，但 RAMHelper 当前没有接成 xv6 可用的块设备 MMIO。
 - 要做：
-  - 决定方案：
-    - 实现简单 MMIO 磁盘读写。
-    - 或改 xv6 磁盘驱动为自定义 MMIO。
-  - 处理 xv6 对 S-mode、page fault、`sret`、原子指令的依赖。
-  - 如不完整实现 A 扩展，则修改 xv6 spinlock 规避多核原子依赖。
-  - 先追求启动输出，再追求 shell。
+  - 已决定本轮采用“仓库现有内容 + RAM disk 优先”的方向，不引入外部完整 xv6。
+  - 已定位完整 xv6 的主要阻塞点是缺少完整软件输入和块设备/RAM disk 入口。
+  - 已确认 S-mode、page fault、`sret`、32-bit 原子指令护栏仍通过。
+  - 后续若继续推进，需要提供/引入可修改 xv6 源码，再实现 RAM disk 驱动与镜像加载。
 - 验证：
-  - 自定义 xv6 启动命令。
-  - 记录能输出到哪一行。
+  - 已重跑 Lab5 裁剪 xv6：输出 `xv6 kernel is booting` 和 `Return from init! Test passed`。
+  - 已重跑 Lab5 extra、Lab6、Lab+3 护栏。
+  - 已记录当前无法进入完整 shell 的原因。
 - 产出：
-  - 即使未完整跑通，也可写“尝试了什么、卡在哪里、如何分析”的 Lab+ 报告材料。
+  - “尝试了什么、卡在哪里、如何分析”的 Lab+ 报告材料：`Doc/Lab+/labplus_xv6_main_track_report.md`。
 
 ### 12. Cache 或更复杂性能优化
 
@@ -568,7 +588,7 @@
 - 任务 7：完整 32-bit AMO。（已完成）
 - 任务 9：page fault。（已完成核心路径）
 - 任务 10：S-mode trap / delegation / sret。（已完成核心闭环）
-- 任务 11：完整 xv6 主 Track。
+- 任务 11：完整 xv6 主 Track。（已完成启动尝试与缺口定位）
 
 目标：为高分 Bonus 或更完整系统能力做准备。
 
@@ -581,6 +601,6 @@
 
 ## 当前最推荐的下一步
 
-任务 0-10 已完成。下一步可以开始任务 11：尝试完整 xv6 主 Track；若想先压低风险，也可以先完善 page fault no-diff 自测收尾或 S-level interrupt 细节。
+任务 0-11 已完成到当前可验证边界。下一步若继续追完整 xv6，需要先提供/引入可修改 xv6 源码和文件系统镜像，再实现 RAM disk 驱动与镜像加载；若不继续软件侧，则可以进入任务 12：cache 或更复杂性能优化。
 
-理由：S-mode trap/delegation/`sret` 核心闭环已具备；继续往完整 xv6 推进时，剩余主要缺口转向块设备/MMIO、完整权限细节与更完整系统自测。
+理由：当前仓库只有裁剪 xv6，且 RAMHelper 未提供块设备/RAM disk 入口；没有完整软件输入时，继续改 RTL 很难形成 shell 级验收。
