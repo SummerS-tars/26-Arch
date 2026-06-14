@@ -236,6 +236,62 @@ RAM disk 方案需要下一轮至少补齐其中一项：
 - 提供已适配 RAM disk 的内核镜像。
 - 允许在仓库中引入一个最小 xv6/用户态构建流。
 
+## 后续引入方式调研
+
+参考 Lab+ wiki 的主 Track 说明，完整 xv6 的关键并不是必须实现完整 virtio，而是要让 difftest 在 MMIO 或等价方式下能读到一个硬盘镜像；若最终不能跑通，也需要清楚记录尝试内容和卡点。官方说明也明确提到，可以修改 difftest 让 MMIO 读取虚拟硬盘文件，并把 xv6 原本的 virtio 驱动改成更简单的 MMIO 读取方式。
+
+本轮进一步调研后，当前仓库的约束如下：
+
+- `emu` 的 `-i/--image` 只加载一个 flat binary 或 gzip binary 到物理地址 `0x8000_0000`，不解析 ELF，也没有第二镜像参数。
+- `FIRST_INST_ADDRESS` 和 CPU 复位 PC 都是 `0x8000_0000`，所以后续 `kernel` 必须通过 `objcopy -O binary` 变成 flat `kernel.bin`。
+- 上游 xv6-riscv 标准构建会生成 `kernel/kernel` 和 `fs.img`，文件系统镜像由 `mkfs` 生成；标准磁盘路径依赖 QEMU virtio-mmio 驱动 `kernel/virtio_disk.c`，这与本仓库当前设备模型不匹配。
+- 本仓库有 `sdcard.cpp` 的 C++ 桩，但没有 RTL/DPI 接线；直接启用它不如先做更简单的 RAM disk 加载链路。
+
+因此，推荐的低风险引入路线是：
+
+1. 保持现有 Lab5 裁剪内核作为护栏，确保 `make test-lab5` 仍能输出 `Return from init! Test passed`。
+2. 引入或提供可修改的 xv6-riscv 源码，但不要直接运行未移植的上游 `kernel.bin`。
+3. 先适配平台地址：
+   - UART 改为当前平台的 `0x4060_0004` / `0x4060_0008`。
+   - CLINT/PLIC 根据当前仿真能力裁剪，先允许 PLIC 为空或轮询。
+4. 用 RAM disk 替代 virtio：
+   - 方案 A：扩展 `emu` 增加 `--fs-image`，把 `fs.img` 加载到固定物理地址，例如 `0x8700_0000`。
+   - 方案 B：用脚本把 `kernel.bin` padding 到固定偏移后拼接 `fs.img`，仍然保持单镜像 `-i` 加载。
+   - xv6 侧新增或替换一个薄 `ramdisk` 驱动，按块号从固定物理地址拷贝数据。
+5. 只在 RAM disk 路线跑到文件系统初始化后，再考虑更完整的 PLIC、S-level interrupt 或 virtio-mmio。
+
+从实现成本看，当前最适合的小步不是直接引入上游完整 xv6，而是先做“第二镜像/RAM disk 加载链路”的微型自测：
+
+- 构造一个小的 `fs.img` 或 magic 文件。
+- 在仿真启动时把它放到 `0x8700_0000`。
+- 用一个裸机小程序读取 `0x8700_0000` 的 magic 并 good trap。
+
+这个阶段不需要完整 xv6 源码，就能验证仿真加载链路；通过后再接 xv6 ramdisk 驱动。
+
+## S-mode timer 诊断尝试
+
+完整 xv6 还依赖 S-mode timer interrupt。为低成本定位该风险，本轮新增一个诊断生成器：
+
+- `ready-to-run/lab+/11/gen_smode_timer_diag.py`
+- `ready-to-run/lab+/11/smode_timer_diag.bin`
+- `ready-to-run/lab+/11/smode_timer_diag.S`
+
+测试意图：
+
+- M-mode 设置 `stvec`、`mideleg.STIP`、timer pending 和 `mstatus.MPP=S/SIE=1`。
+- `mret` 进入 S-mode 后等待 timer interrupt。
+- 若进入 S-trap，则认为 S-mode timer delegation 路径具备最小闭环。
+- 若进入 M-trap 或无法触发，则记录为完整 xv6 后续风险。
+
+当前运行结果：
+
+```text
+./build/emu --no-diff -i ready-to-run/lab+/11/smode_timer_diag.bin -C 200000 --force-dump-result
+EXCEEDING CYCLE/INSTR LIMIT at pc = 0x80000034 / 0x80000014
+```
+
+该诊断暂未形成 clean good/bad trap。结合当前 `core_trap_ctrl.sv`，中断 pending 仍主要按 machine interrupt bit 和 machine cause 处理，S-level timer pending/cause 的完整语义仍需要后续专门处理。考虑到该诊断已经开始牵涉中断生成、委托 cause 映射和测试构造细节，本轮按“小步推进”原则先暂停深入实现，仅保留诊断资产和记录。
+
 ## 结论
 
 任务 11 本轮完成了启动尝试和缺口定位：
@@ -244,5 +300,6 @@ RAM disk 方案需要下一轮至少补齐其中一项：
 - S-mode trap/delegation/`sret` 和 Lab+3 原子回归仍通过。
 - 仿真设备明确缺少完整 xv6 所需的块设备或 RAM disk 入口。
 - 在不引入外部完整 xv6 的前提下，无法直接验证进入 shell。
+- 后续最推荐先做 RAM disk 加载链路微型自测，再接入可修改 xv6 的 ramdisk 驱动。
 
 下一步若继续推进完整 xv6，建议先提供或引入可修改的 xv6 源码，然后优先实现 RAM disk 驱动与镜像加载；等能读文件系统和进入用户态后，再考虑 PLIC、virtio 或更完整 S-level interrupt 语义。

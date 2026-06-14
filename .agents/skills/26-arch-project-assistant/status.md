@@ -35,6 +35,8 @@ Update it whenever the current implementation stage or verified support boundary
 - Full xv6 main Track has been scoped: current repo has only the Lab5 trimmed kernel, no full xv6 source/image or `fs.img`, and no RAMHelper block device/RAM-disk path yet
 - Lab+12 minimal I-cache is implemented after the MMU: fetch-only, physical-address, RAM-region cache; load/store/AMO/page-table walk/MMIO bypass
 - Lab+13 board extension is explicitly unsupported for this iteration
+- Full xv6 import path recommendation: keep flat `kernel.bin` loading, add a RAM-disk/second-image micro-test before importing full xv6; direct upstream xv6 + virtio-mmio is too high-risk as the first step
+- S-mode timer delegation diagnostic assets exist under `ready-to-run/lab+/11/`, but the current no-diff run reaches a cycle cap instead of a clean good/bad trap
 - Lab 1–6 behavior preserved after refactor
 
 ## Current validation snapshot
@@ -69,10 +71,10 @@ Steps 1–7 from `Doc/Refactor_TODO.md` are done on branch `refactor/before_labp
 
 ## Likely next direction
 
-1. Further performance work can extend the I-cache with larger lines or sequential prefetch.
-2. Keep D-cache deferred unless the scope explicitly accepts store/MMIO/AMO consistency risk.
-3. Continue full xv6 only after providing/importing modifiable xv6 source plus a filesystem image; prefer RAM disk before virtio-mmio.
-4. Polish page-fault no-diff self-tests or refine S-level interrupt/SUM/MXR/TSR/TW/TVM semantics if needed for reports.
+1. Next small xv6 step: implement a RAM-disk/second-image loading micro-test with a magic read from a fixed physical address.
+2. Continue full xv6 only after providing/importing modifiable xv6 source plus a filesystem image; prefer RAM disk before virtio-mmio.
+3. Refine S-level timer interrupt delegation after the current diagnostic can be made to end cleanly.
+4. Further performance work can extend the I-cache with larger lines or sequential prefetch; keep D-cache deferred unless the scope accepts store/MMIO/AMO consistency risk.
 
 ## Update rule
 

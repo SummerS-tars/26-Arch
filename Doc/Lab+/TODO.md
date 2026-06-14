@@ -539,11 +539,14 @@
   - 已决定本轮采用“仓库现有内容 + RAM disk 优先”的方向，不引入外部完整 xv6。
   - 已定位完整 xv6 的主要阻塞点是缺少完整软件输入和块设备/RAM disk 入口。
   - 已确认 S-mode、page fault、`sret`、32-bit 原子指令护栏仍通过。
+  - 已进一步调研 xv6 引入方式：上游 xv6 需要 `kernel.bin` + `fs.img`，标准 `virtio_disk.c` 不适配当前平台；最低风险路线是先做 RAM disk 加载链路。
+  - 已新增 S-mode timer delegation 诊断资产，但当前 no-diff 运行未形成 clean good/bad trap，说明 S-level timer interrupt 仍需后续专门处理。
   - 后续若继续推进，需要提供/引入可修改 xv6 源码，再实现 RAM disk 驱动与镜像加载。
 - 验证：
   - 已重跑 Lab5 裁剪 xv6：输出 `xv6 kernel is booting` 和 `Return from init! Test passed`。
   - 已重跑 Lab5 extra、Lab6、Lab+3 护栏。
   - 已记录当前无法进入完整 shell 的原因。
+  - 已尝试 `ready-to-run/lab+/11/smode_timer_diag.bin`，当前在 cycle cap 下停于早期 PC，暂作为诊断记录。
 - 产出：
   - “尝试了什么、卡在哪里、如何分析”的 Lab+ 报告材料：`Doc/Lab+/labplus_xv6_main_track_report.md`。
 
@@ -624,6 +627,6 @@
 
 ## 当前最推荐的下一步
 
-任务 0-12 已完成到当前可验证边界，任务 13 明确不支持。若继续优化，可在任务 12 基础上尝试更大 cache line 或顺序 prefetch；D-cache 仍建议后置。
+任务 0-12 已完成到当前可验证边界，任务 13 明确不支持。若继续按小步推进 xv6，下一步建议先做 RAM disk 加载链路微型自测：让 `emu` 或拼镜像脚本把一个 magic 文件放到固定物理地址，再用裸机程序读出并 good trap。
 
-理由：最小 I-cache 已验证能降低 `fetch_waits` 并提升 Lab+2 性能样本 IPC；继续做 D-cache 会牵涉 store/MMIO/AMO/一致性，成本和回归风险明显更高。
+理由：完整 xv6 需要 `kernel.bin` + `fs.img`，而当前仓库既没有完整 xv6 软件输入，也没有块设备入口；先验证 RAM disk 加载链路，比直接引入上游 xv6 或实现 virtio-mmio 风险更低。
