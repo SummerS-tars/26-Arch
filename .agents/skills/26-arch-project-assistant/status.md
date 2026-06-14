@@ -26,6 +26,7 @@ Update it whenever the current implementation stage or verified support boundary
 - Shared packages: `trap_pkg`, `mem_helpers_pkg`, pipeline packets in `common.sv`
 - Bus path: `IBusToCBus` + `DBusToCBus` + `CBusArbiter` + `MMU` (MMU flushes walk on satp/priv change)
 - RV64M integer multiply/divide support is implemented in decode/ALU
+- Lab+2 performance counters are available with `make sim BENCHMARK=1`
 - Lab 1–6 behavior preserved after refactor
 
 ## Current validation snapshot
@@ -38,6 +39,7 @@ Update it whenever the current implementation stage or verified support boundary
 | `make test-lab5` | pass — `Return from init! Test passed` |
 | `make test-lab6` | pass — `Privileged test finished.` / `Exit with code = 0` |
 | Lab+2 direct run | partial — no mismatch; default delay passes qsort/queen before 600s timeout, `DELAY=0` passes qsort/queen/bf before 600s timeout |
+| Lab+2 perf sample | pass — 50M-cycle sample IPC 0.181989, default not-taken branch direction accuracy ~19.5% |
 | Lab+3 direct run | fail — Difftest mismatch at `pc = 0x80000028`, first `amoswap.w` unsupported |
 | Lab+4 direct run | fail — no-diff run exceeds cycle limit at `pc = 0x0` with explicit cycle cap |
 
@@ -55,7 +57,7 @@ Steps 1–7 from `Doc/Refactor_TODO.md` are done on branch `refactor/before_labp
 
 ## Likely next direction
 
-1. Add lightweight Lab+2 performance counters before implementing prediction/cache.
+1. Implement simple branch prediction and compare against the Lab+2 performance baseline.
 2. Implement A extension minimal set (`amoswap.w`, `amoadd.w`, `lr.w`, `sc.w`) for Lab+3.
 3. Implement PMP/access fault path for Lab+4 after M/A baselines are understood.
 4. Revisit IBus addr latch / CBus `saved_req` hold after lab+ with board regression if needed.

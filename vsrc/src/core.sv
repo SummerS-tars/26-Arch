@@ -513,6 +513,79 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 	end
 
 `ifdef VERILATOR
+	localparam logic [63:0] PERF_PRINT_PERIOD = 64'd10_000_000;
+	logic [63:0] perf_print_cnt;
+	logic [63:0] perf_branch_total, perf_branch_taken, perf_branch_nt_correct;
+	logic [63:0] perf_jump_total, perf_jalr_total;
+	logic [63:0] perf_ex_redirects, perf_system_redirects;
+	logic [63:0] perf_load_use_stalls, perf_fetch_waits, perf_mem_waits;
+	logic        perf_ex_fire;
+
+	assign perf_ex_fire = id_ex_q.inst_valid && !fetch_wait && !mem_wait && !system_redirect_fire_wb;
+
+	always_ff @(posedge clk) begin
+		if (reset) begin
+			perf_print_cnt        <= 64'b0;
+			perf_branch_total     <= 64'b0;
+			perf_branch_taken     <= 64'b0;
+			perf_branch_nt_correct <= 64'b0;
+			perf_jump_total       <= 64'b0;
+			perf_jalr_total       <= 64'b0;
+			perf_ex_redirects     <= 64'b0;
+			perf_system_redirects <= 64'b0;
+			perf_load_use_stalls  <= 64'b0;
+			perf_fetch_waits      <= 64'b0;
+			perf_mem_waits        <= 64'b0;
+		end else begin
+			if (perf_ex_fire && id_ex_q.is_branch && !exception_valid_ex_eff) begin
+				perf_branch_total <= perf_branch_total + 64'd1;
+				if (branch_taken_ex)
+					perf_branch_taken <= perf_branch_taken + 64'd1;
+				else
+					perf_branch_nt_correct <= perf_branch_nt_correct + 64'd1;
+			end
+
+			if (perf_ex_fire && id_ex_q.is_jump && !exception_valid_ex_eff) begin
+				perf_jump_total <= perf_jump_total + 64'd1;
+				if (id_ex_q.is_jalr)
+					perf_jalr_total <= perf_jalr_total + 64'd1;
+			end
+
+			if (redirect_fire_ex)
+				perf_ex_redirects <= perf_ex_redirects + 64'd1;
+			if (system_redirect_fire_wb)
+				perf_system_redirects <= perf_system_redirects + 64'd1;
+			if (load_use_hazard)
+				perf_load_use_stalls <= perf_load_use_stalls + 64'd1;
+			if (fetch_wait)
+				perf_fetch_waits <= perf_fetch_waits + 64'd1;
+			if (mem_wait)
+				perf_mem_waits <= perf_mem_waits + 64'd1;
+
+			if (`BENCHMARK) begin
+				if (perf_print_cnt == PERF_PRINT_PERIOD - 64'd1) begin
+					$display("[perf] cycles=%0d instr=%0d ipc_x1000=%0d branches=%0d taken=%0d nt_pred_ok=%0d jumps=%0d jalr=%0d ex_redirects=%0d system_redirects=%0d load_use_stalls=%0d fetch_waits=%0d mem_waits=%0d",
+						cycle_cnt,
+						instr_cnt,
+						(cycle_cnt == 64'b0) ? 64'b0 : ((instr_cnt * 64'd1000) / cycle_cnt),
+						perf_branch_total,
+						perf_branch_taken,
+						perf_branch_nt_correct,
+						perf_jump_total,
+						perf_jalr_total,
+						perf_ex_redirects,
+						perf_system_redirects,
+						perf_load_use_stalls,
+						perf_fetch_waits,
+						perf_mem_waits);
+					perf_print_cnt <= 64'b0;
+				end else begin
+					perf_print_cnt <= perf_print_cnt + 64'd1;
+				end
+			end
+		end
+	end
+
 	core_difftest_adapter difftest_adapter(
 		.clk            (clk),
 		.coreid         (csr_mhartid[7:0]),
