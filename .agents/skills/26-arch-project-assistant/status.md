@@ -8,7 +8,7 @@ Update it whenever the current implementation stage or verified support boundary
 ## Last checked
 
 - Date: 2026-06-14
-- Method: Refactor_TODO steps 1–7 + Lab+ tasks 0–12 + Lab4/Lab5/Lab6 recorded regression + Lab+ baseline runs
+- Method: Refactor_TODO steps 1–7 + Lab+ tasks 0–12 + Lab+11 RAM-disk loader micro-test + Lab4/Lab5/Lab6 recorded regression + Lab+ baseline runs
 
 ## Current project understanding
 
@@ -32,10 +32,10 @@ Update it whenever the current implementation stage or verified support boundary
 - Lab+4 PMP support covers `pmpaddr0/pmpcfg0` entry0 NAPOT R/W/X checks for U/S-mode fetch/load/store/AMO
 - MMU page fault core path is implemented for Sv39 invalid PTE, R/W/X/A/D checks, basic U-mode checks, and fault feedback to core
 - S-mode trap/delegation/`sret` core path is implemented: delegated traps write `sepc/scause/stval`, redirect to `stvec`, and `sret` restores `SPP/SPIE/SIE`
-- Full xv6 main Track has been scoped: current repo has only the Lab5 trimmed kernel, no full xv6 source/image or `fs.img`, and no RAMHelper block device/RAM-disk path yet
+- Full xv6 main Track has been scoped: current repo has only the Lab5 trimmed kernel and no full xv6 source/image or `fs.img`; emu now has a fixed-address `--fs-image` RAM-disk loading path, but xv6-side RAM-disk driver is still missing
 - Lab+12 minimal I-cache is implemented after the MMU: fetch-only, physical-address, RAM-region cache; load/store/AMO/page-table walk/MMIO bypass
 - Lab+13 board extension is explicitly unsupported for this iteration
-- Full xv6 import path recommendation: keep flat `kernel.bin` loading, add a RAM-disk/second-image micro-test before importing full xv6; direct upstream xv6 + virtio-mmio is too high-risk as the first step
+- Full xv6 import path recommendation: keep flat `kernel.bin` loading and use the verified `--fs-image` RAM-disk path before attempting virtio-mmio
 - S-mode timer delegation diagnostic assets exist under `ready-to-run/lab+/11/`, but the current no-diff run reaches a cycle cap instead of a clean good/bad trap
 - Lab 1–6 behavior preserved after refactor
 
@@ -50,6 +50,7 @@ Update it whenever the current implementation stage or verified support boundary
 | `make test-lab5-extra` | pass — `HIT GOOD TRAP at pc = 0x800002b4`, covers delegated U-mode ecall to S trap and `sret` return |
 | `make test-lab6` | pass — `Privileged test finished.` / `Exit with code = 0` |
 | Lab+11 xv6 attempt | scoped — existing Lab5 trimmed kernel reaches `xv6 kernel is booting` / `Return from init! Test passed`; full shell is blocked by missing full xv6 image/source and block device/RAM-disk support |
+| Lab+11 RAM-disk loader micro-test | pass — `--fs-image ./ready-to-run/lab+/11/ramdisk_magic.img` loads 4 bytes to `0x87000000`; `ramdisk_magic_test.bin` reads `0x12345678` and hits good trap at `0x80000028` |
 | Lab+2 direct run | partial — no mismatch; default delay passes qsort/queen before 600s timeout, `DELAY=0` passes qsort/queen/bf before 600s timeout |
 | Lab+2 perf sample | pass — after I-cache 50M-cycle sample IPC ~0.307, `fetch_waits` ~18.5M/50M; previous status snapshot was IPC ~0.190, `fetch_waits` ~31.2M/50M |
 | Lab+3 direct run | pass — `HIT GOOD TRAP at pc = 0x800000dc`, `cycleCnt = 221` after I-cache |
@@ -71,8 +72,8 @@ Steps 1–7 from `Doc/Refactor_TODO.md` are done on branch `refactor/before_labp
 
 ## Likely next direction
 
-1. Next small xv6 step: implement a RAM-disk/second-image loading micro-test with a magic read from a fixed physical address.
-2. Continue full xv6 only after providing/importing modifiable xv6 source plus a filesystem image; prefer RAM disk before virtio-mmio.
+1. Next small xv6 step: provide/import modifiable xv6 source plus a filesystem image, then add the xv6-side RAM-disk driver using the verified `--fs-image` loader.
+2. Keep RAM disk before virtio-mmio for full xv6; direct upstream xv6 + virtio remains high risk.
 3. Refine S-level timer interrupt delegation after the current diagnostic can be made to end cleanly.
 4. Further performance work can extend the I-cache with larger lines or sequential prefetch; keep D-cache deferred unless the scope accepts store/MMIO/AMO consistency risk.
 

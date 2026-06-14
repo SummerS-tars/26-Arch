@@ -226,11 +226,11 @@ virtio-mmio 至少需要处理：
 
 这会把任务从 CPU/特权架构验证扩大成设备协议移植。当前阶段更适合用 RAM disk 快速验证 xv6 主路径。
 
-### 当前不能立即落地的原因
+### 完整 RAM disk 仍不能立即落地的原因
 
-仓库没有完整 xv6 源码或可修改的磁盘驱动，因此本轮不强行写 RAM disk RTL 或 C++ 加载代码。否则会产生一个没有软件消费者的接口，无法验证。
+仓库没有完整 xv6 源码或可修改的磁盘驱动，因此本轮不强行实现 xv6 侧 RAM disk driver。否则会产生一个没有真实软件消费者的接口，无法验证完整文件系统路径。
 
-RAM disk 方案需要下一轮至少补齐其中一项：
+RAM disk 完整方案需要下一轮至少补齐其中一项：
 
 - 提供可修改的 xv6 源码。
 - 提供已适配 RAM disk 的内核镜像。
@@ -242,7 +242,7 @@ RAM disk 方案需要下一轮至少补齐其中一项：
 
 本轮进一步调研后，当前仓库的约束如下：
 
-- `emu` 的 `-i/--image` 只加载一个 flat binary 或 gzip binary 到物理地址 `0x8000_0000`，不解析 ELF，也没有第二镜像参数。
+- `emu` 的 `-i/--image` 只加载一个 flat binary 或 gzip binary 到物理地址 `0x8000_0000`，不解析 ELF；本轮已补一个可选 `--fs-image` 第二镜像参数用于 RAM disk 路线。
 - `FIRST_INST_ADDRESS` 和 CPU 复位 PC 都是 `0x8000_0000`，所以后续 `kernel` 必须通过 `objcopy -O binary` 变成 flat `kernel.bin`。
 - 上游 xv6-riscv 标准构建会生成 `kernel/kernel` 和 `fs.img`，文件系统镜像由 `mkfs` 生成；标准磁盘路径依赖 QEMU virtio-mmio 驱动 `kernel/virtio_disk.c`，这与本仓库当前设备模型不匹配。
 - 本仓库有 `sdcard.cpp` 的 C++ 桩，但没有 RTL/DPI 接线；直接启用它不如先做更简单的 RAM disk 加载链路。
@@ -260,11 +260,31 @@ RAM disk 方案需要下一轮至少补齐其中一项：
    - xv6 侧新增或替换一个薄 `ramdisk` 驱动，按块号从固定物理地址拷贝数据。
 5. 只在 RAM disk 路线跑到文件系统初始化后，再考虑更完整的 PLIC、S-level interrupt 或 virtio-mmio。
 
-从实现成本看，当前最适合的小步不是直接引入上游完整 xv6，而是先做“第二镜像/RAM disk 加载链路”的微型自测：
+从实现成本看，当前最适合的小步不是直接引入上游完整 xv6，而是先做“第二镜像/RAM disk 加载链路”的微型自测。本轮已完成该小步：
 
-- 构造一个小的 `fs.img` 或 magic 文件。
-- 在仿真启动时把它放到 `0x8700_0000`。
-- 用一个裸机小程序读取 `0x8700_0000` 的 magic 并 good trap。
+- `emu` 新增 `--fs-image=FILE`，把第二镜像加载到物理地址 `0x8700_0000`。
+- `difftest/src/test/csrc/common/ram.cpp` 新增 `load_ram_image_at()`，用于把 host 文件放入模拟 RAM 的固定物理偏移。
+- 新增 `ready-to-run/lab+/11/gen_ramdisk_magic_test.py`，生成：
+  - `ramdisk_magic_test.bin`
+  - `ramdisk_magic_test.S`
+  - `ramdisk_magic.img`
+- 裸机测试从 `0x8700_0000` 读取 magic `0x12345678`，匹配后 good trap。
+
+验证命令：
+
+```bash
+make sim
+./build/emu --no-diff -i ./ready-to-run/lab+/11/ramdisk_magic_test.bin --fs-image ./ready-to-run/lab+/11/ramdisk_magic.img -C 20000 -I 1000
+```
+
+关键输出：
+
+```text
+Loaded 4 bytes from ./ready-to-run/lab+/11/ramdisk_magic.img to 0x87000000
+Core 0: HIT GOOD TRAP at pc = 0x80000028
+```
+
+补充说明：为让 `--no-diff` 裸机诊断能 clean 退出，`emu` 主循环现在即使禁用参考模型比对，也会读取 RTL 侧 trap event；diff 模式下仍继续执行原有参考模型比对。
 
 这个阶段不需要完整 xv6 源码，就能验证仿真加载链路；通过后再接 xv6 ramdisk 驱动。
 
@@ -298,8 +318,8 @@ EXCEEDING CYCLE/INSTR LIMIT at pc = 0x80000034 / 0x80000014
 
 - 当前仓库能稳定运行 Lab5 裁剪 xv6 到 `Return from init! Test passed`。
 - S-mode trap/delegation/`sret` 和 Lab+3 原子回归仍通过。
-- 仿真设备明确缺少完整 xv6 所需的块设备或 RAM disk 入口。
+- 仿真侧已具备 RAM disk/第二镜像加载入口，但仍缺少完整 xv6 软件输入和 xv6 侧 RAM disk 驱动。
 - 在不引入外部完整 xv6 的前提下，无法直接验证进入 shell。
-- 后续最推荐先做 RAM disk 加载链路微型自测，再接入可修改 xv6 的 ramdisk 驱动。
+- RAM disk 加载链路微型自测已通过；后续最推荐接入可修改 xv6 的 ramdisk 驱动。
 
-下一步若继续推进完整 xv6，建议先提供或引入可修改的 xv6 源码，然后优先实现 RAM disk 驱动与镜像加载；等能读文件系统和进入用户态后，再考虑 PLIC、virtio 或更完整 S-level interrupt 语义。
+下一步若继续推进完整 xv6，建议先提供或引入可修改的 xv6 源码，然后优先实现 xv6 侧 RAM disk 驱动；等能读文件系统和进入用户态后，再考虑 PLIC、virtio 或更完整 S-level interrupt 语义。

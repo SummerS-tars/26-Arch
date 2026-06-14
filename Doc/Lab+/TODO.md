@@ -524,7 +524,7 @@
 - 产出：
   - 特权架构扩展说明：`Doc/Lab+/labplus_smode_trap_report.md`。
 
-### 11. 尝试完整 xv6 主 Track（已完成启动尝试与缺口定位）
+### 11. 尝试完整 xv6 主 Track（已完成启动尝试、缺口定位与 RAM disk 加载链路微测）
 
 - 成本：很高
 - 优先级：低
@@ -535,17 +535,24 @@
   - 已确认仓库内没有完整 xv6 源码、完整 `kernel.bin` 或 `fs.img`。
   - 未见 virtio 或磁盘 MMIO 支持。
   - difftest 侧有 sdcard 相关代码，但 RAMHelper 当前没有接成 xv6 可用的块设备 MMIO。
+  - 仿真器现已支持 `--fs-image`，可把第二镜像加载到 `0x8700_0000`，作为后续 RAM disk 路线的基础。
 - 要做：
   - 已决定本轮采用“仓库现有内容 + RAM disk 优先”的方向，不引入外部完整 xv6。
   - 已定位完整 xv6 的主要阻塞点是缺少完整软件输入和块设备/RAM disk 入口。
   - 已确认 S-mode、page fault、`sret`、32-bit 原子指令护栏仍通过。
   - 已进一步调研 xv6 引入方式：上游 xv6 需要 `kernel.bin` + `fs.img`，标准 `virtio_disk.c` 不适配当前平台；最低风险路线是先做 RAM disk 加载链路。
+  - 已实现 RAM disk/第二镜像加载微测：`ramdisk_magic.img` 被加载到 `0x8700_0000`，裸机程序读取 magic 后 good trap。
   - 已新增 S-mode timer delegation 诊断资产，但当前 no-diff 运行未形成 clean good/bad trap，说明 S-level timer interrupt 仍需后续专门处理。
-  - 后续若继续推进，需要提供/引入可修改 xv6 源码，再实现 RAM disk 驱动与镜像加载。
+  - 后续若继续推进，需要提供/引入可修改 xv6 源码，再实现 xv6 侧 RAM disk 驱动。
 - 验证：
   - 已重跑 Lab5 裁剪 xv6：输出 `xv6 kernel is booting` 和 `Return from init! Test passed`。
   - 已重跑 Lab5 extra、Lab6、Lab+3 护栏。
   - 已记录当前无法进入完整 shell 的原因。
+  - 已验证 RAM disk 加载链路：
+    - `make sim`
+    - `./build/emu --no-diff -i ./ready-to-run/lab+/11/ramdisk_magic_test.bin --fs-image ./ready-to-run/lab+/11/ramdisk_magic.img -C 20000 -I 1000`
+    - 输出 `Loaded 4 bytes ... to 0x87000000` 和 `HIT GOOD TRAP at pc = 0x80000028`。
+  - 已运行 Lab1 基础回归：输出 `HIT GOOD TRAP at pc = 0x80010004`。
   - 已尝试 `ready-to-run/lab+/11/smode_timer_diag.bin`，当前在 cycle cap 下停于早期 PC，暂作为诊断记录。
 - 产出：
   - “尝试了什么、卡在哪里、如何分析”的 Lab+ 报告材料：`Doc/Lab+/labplus_xv6_main_track_report.md`。
