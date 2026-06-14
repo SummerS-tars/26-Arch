@@ -23,6 +23,7 @@ module MMU
         STATE_IDLE,
         STATE_WALK,
         STATE_ISSUE,
+        STATE_FAULT,
         STATE_WAIT_CLEAR
     } state_t;
 
@@ -45,6 +46,7 @@ module MMU
     u64 next_pte_addr;
     u64 leaf_paddr;
     cbus_req_t walk_req, final_req;
+    cbus_resp_t fault_resp;
 
     function automatic u64 vpn_index(input u64 vaddr, input logic [1:0] level);
         begin
@@ -70,11 +72,57 @@ module MMU
         end
     endfunction
 
+    function automatic logic sv39_canonical(input u64 vaddr);
+        begin
+            sv39_canonical = (vaddr[63:39] == {25{vaddr[38]}});
+        end
+    endfunction
+
+    function automatic logic pte_invalid(input u64 pte);
+        begin
+            pte_invalid = !pte[0] || (pte[2] && !pte[1]);
+        end
+    endfunction
+
+    function automatic logic pte_leaf(input u64 pte);
+        begin
+            pte_leaf = |pte[3:1];
+        end
+    endfunction
+
+    function automatic logic superpage_misaligned(input u64 pte, input logic [1:0] level);
+        begin
+            case (level)
+                2'd2: superpage_misaligned = |pte[27:10];
+                2'd1: superpage_misaligned = |pte[18:10];
+                default: superpage_misaligned = 1'b0;
+            endcase
+        end
+    endfunction
+
+    function automatic logic pte_permission_fault(
+        input u64 pte,
+        input mem_access_t access,
+        input priv_mode_t priv
+    );
+        logic need_r, need_w, need_x;
+        begin
+            need_r = (access == MEM_ACCESS_LOAD);
+            need_w = (access == MEM_ACCESS_STORE);
+            need_x = (access == MEM_ACCESS_FETCH);
+            pte_permission_fault = !pte[6] ||
+                (need_r && !pte[1]) ||
+                (need_w && (!pte[2] || !pte[7])) ||
+                (need_x && !pte[3]) ||
+                ((priv == PRIV_U) && !pte[4]);
+        end
+    endfunction
+
     assign translate_en = (priv_mode != PRIV_M) && (satp[63:60] == 4'd8);
     assign resp_done = oresp.ready && oresp.last;
     assign pte_done = resp_done;
     assign pte_data = oresp.data;
-    assign leaf_pte = |pte_data[3:1];
+    assign leaf_pte = pte_leaf(pte_data);
     assign next_pte_addr = ({8'b0, pte_data[53:10], 12'b0}) +
         (vpn_index(vaddr_q, level_q - 2'd1) << 3);
     assign leaf_paddr = leaf_addr(pte_data, vaddr_q, level_q);
@@ -90,9 +138,15 @@ module MMU
         walk_req.data     = 64'b0;
         walk_req.len      = MLEN1;
         walk_req.burst    = AXI_BURST_FIXED;
+        walk_req.access   = MEM_ACCESS_LOAD;
 
         final_req      = saved_req_q;
         final_req.addr = translated_addr_q;
+
+        fault_resp            = '0;
+        fault_resp.ready      = 1'b1;
+        fault_resp.last       = 1'b1;
+        fault_resp.page_fault = 1'b1;
     end
 
     always_comb begin
@@ -112,6 +166,9 @@ module MMU
             STATE_ISSUE: begin
                 oreq  = final_req;
                 iresp = oresp;
+            end
+            STATE_FAULT: begin
+                iresp = fault_resp;
             end
             STATE_WAIT_CLEAR: begin
                 oreq  = '0;
@@ -148,20 +205,25 @@ module MMU
                             level_q     <= 2'd2;
                             pte_addr_q  <= ({8'b0, satp[43:0], 12'b0}) +
                                 (vpn_index(ireq.addr, 2'd2) << 3);
-                            state_q     <= STATE_WALK;
+                            state_q     <= sv39_canonical(ireq.addr) ? STATE_WALK : STATE_FAULT;
                             resume_state_q <= STATE_IDLE;
                         end
                     end
                     STATE_WALK: begin
                         if (pte_done) begin
-                            if (!pte_data[0]) begin
-                                translated_addr_q <= vaddr_q;
-                                resume_state_q    <= STATE_ISSUE;
-                                state_q           <= STATE_WAIT_CLEAR;
-                            end else if (leaf_pte || level_q == 2'd0) begin
-                                translated_addr_q <= leaf_paddr;
-                                resume_state_q    <= STATE_ISSUE;
-                                state_q           <= STATE_WAIT_CLEAR;
+                            if (pte_invalid(pte_data)) begin
+                                state_q <= STATE_FAULT;
+                            end else if (leaf_pte) begin
+                                if (superpage_misaligned(pte_data, level_q) ||
+                                    pte_permission_fault(pte_data, saved_req_q.access, priv_mode_ctx_q)) begin
+                                    state_q <= STATE_FAULT;
+                                end else begin
+                                    translated_addr_q <= leaf_paddr;
+                                    resume_state_q    <= STATE_ISSUE;
+                                    state_q           <= STATE_WAIT_CLEAR;
+                                end
+                            end else if (level_q == 2'd0) begin
+                                state_q <= STATE_FAULT;
                             end else begin
                                 level_q    <= level_q - 2'd1;
                                 pte_addr_q <= next_pte_addr;
@@ -175,6 +237,10 @@ module MMU
                             resume_state_q <= STATE_IDLE;
                             state_q        <= STATE_WAIT_CLEAR;
                         end
+                    end
+                    STATE_FAULT: begin
+                        resume_state_q <= STATE_IDLE;
+                        state_q        <= STATE_WAIT_CLEAR;
                     end
                     STATE_WAIT_CLEAR: begin
                         state_q <= resume_state_q;

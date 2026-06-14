@@ -121,6 +121,12 @@ typedef enum i3 {
     MSIZE8 = 3'b011
 } msize_t;
 
+typedef enum logic [1:0] {
+    MEM_ACCESS_FETCH = 2'd0,
+    MEM_ACCESS_LOAD  = 2'd1,
+    MEM_ACCESS_STORE = 2'd2
+} mem_access_t;
+
 // length of a burst transaction
 // NOTE: WRAP mode in AXI3 only supports power-of-2 length.
 typedef enum i8 {
@@ -182,12 +188,14 @@ typedef struct packed {
     msize_t  size;      // number of bytes
     strobe_t strobe;    // which bytes are enabled? set to zeros for read request
     word_t   data;      // the data to write
+    mem_access_t access;
 } dbus_req_t;
 
 typedef struct packed {
     logic  addr_ok;     // is the address accepted by cache?
     logic  data_ok;     // is the field "data" valid?
     word_t data;        // the data read from cache
+    logic  page_fault;
 } dbus_resp_t;
 
 /**
@@ -205,6 +213,7 @@ typedef struct packed {
     logic  addr_ok;     // is the address accepted by cache?
     logic  data_ok;     // is the field "data" valid?
     u32 data;           // the data read from cache
+    logic  page_fault;
 } ibus_resp_t;
 
 typedef enum logic [4:0] {
@@ -419,10 +428,10 @@ function automatic mem_wb_t mem_wb_bubble();
 endfunction
 
 `define IREQ_TO_DREQ(ireq) \
-    {ireq, MSIZE4, 8'b0, 64'b0}
+    {ireq, MSIZE4, 8'b0, 64'b0, MEM_ACCESS_FETCH}
 
 `define DRESP_TO_IRESP(dresp, ireq) \
-    {dresp.addr_ok, dresp.data_ok, ireq.addr[2] ? dresp.data[63:32] : dresp.data[31:0]}
+    {dresp.addr_ok, dresp.data_ok, ireq.addr[2] ? dresp.data[63:32] : dresp.data[31:0], dresp.page_fault}
 
 /**
  * cache bus: simplified burst AXI transaction interface
@@ -443,12 +452,14 @@ typedef struct packed {
     word_t   data;      // the data to write
     mlen_t   len;       // number of bursts
     axi_burst_type_t burst;
+    mem_access_t access;
 } cbus_req_t;
 
 typedef struct packed {
     logic  ready;       // is data arrived in this cycle?
     logic  last;        // is it the last word?
     word_t data;        // the data from AXI bus
+    logic  page_fault;
 } cbus_resp_t;
 
 endpackage

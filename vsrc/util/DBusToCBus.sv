@@ -25,6 +25,7 @@ module DBusToCBus
     assign dcreq.data     =  dreq.data;
     assign dcreq.len      =  MLEN1;
 	assign dcreq.burst = AXI_BURST_FIXED;
+    assign dcreq.access   =  dreq.access;
 
     logic okay;
     assign okay = dcresp.ready && dcresp.last;
@@ -32,6 +33,7 @@ module DBusToCBus
     assign dresp.addr_ok = okay;
     assign dresp.data_ok = okay;
     assign dresp.data    = dcresp.data;
+    assign dresp.page_fault = dcresp.page_fault;
 endmodule
 
 

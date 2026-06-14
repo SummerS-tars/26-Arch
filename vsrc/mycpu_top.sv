@@ -41,6 +41,7 @@ module mycpu_top
   assign len = oreq.len;
   assign oresp.ready = ready;
   assign oresp.last = last;
+  assign oresp.page_fault = 1'b0;
   assign size = oreq.size;
 
 endmodule

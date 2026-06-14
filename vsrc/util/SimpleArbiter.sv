@@ -89,12 +89,16 @@ module SimpleArbiter
 
 	for (genvar i = 0; i < RMEM_WIDTH; i++) begin
 		assign rresp[i].addr_ok = 1'b1;
+		assign rresp[i].data_ok = dresp[i].data_ok;
 		assign rresp[i].data = dresp[i].data;
+		assign rresp[i].page_fault = dresp[i].page_fault;
 	end
 
 	for (genvar i = 0; i < WMEM_WIDTH; i++) begin
 		assign wresp[i].addr_ok = 1'b1;
+		assign wresp[i].data_ok = dresp[RMEM_WIDTH + i].data_ok;
 		assign wresp[i].data = 'x;
+		assign wresp[i].page_fault = dresp[RMEM_WIDTH + i].page_fault;
 		
 	end	
 	

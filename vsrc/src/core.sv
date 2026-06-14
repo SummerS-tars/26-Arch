@@ -113,7 +113,7 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 	// ========== 3. IF_ID Reg ==========
 	logic [63:0] pc_id;
 	logic [31:0] instr_id;
-	logic        inst_valid_id, inst_access_fault_id;
+	logic        inst_valid_id, inst_access_fault_id, inst_page_fault_id;
 
 	always_ff @(posedge clk) begin
 		if (reset || system_redirect_fire_wb || redirect_fire_ex || pred_redirect_fire_id) begin
@@ -121,11 +121,13 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 			instr_id      <= 32'b0;
 			inst_valid_id <= 1'b0;
 			inst_access_fault_id <= 1'b0;
+			inst_page_fault_id <= 1'b0;
 		end else if (!stall) begin
 			pc_id         <= pc;
 			instr_id      <= pmp_inst_access_fault_if ? 32'b0 : iresp.data;
 			inst_valid_id <= pmp_inst_access_fault_if || iresp.data_ok;
 			inst_access_fault_id <= pmp_inst_access_fault_if;
+			inst_page_fault_id <= !pmp_inst_access_fault_if && iresp.data_ok && iresp.page_fault;
 		end
 	end
 
@@ -229,9 +231,11 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 			id_ex_q.mem_read        <= mem_read_id;
 			id_ex_q.mem_write       <= mem_write_id;
 			id_ex_q.reg_write       <= reg_write_id;
-			id_ex_q.exception_valid <= inst_valid_id && (inst_access_fault_id || is_illegal_id);
-			id_ex_q.exception_cause <= inst_access_fault_id ? CAUSE_INST_ACCESS : CAUSE_ILLEGAL_INST;
-			id_ex_q.exception_tval  <= inst_access_fault_id ? pc_id : 64'b0;
+			id_ex_q.exception_valid <= inst_valid_id &&
+				(inst_access_fault_id || inst_page_fault_id || is_illegal_id);
+			id_ex_q.exception_cause <= inst_access_fault_id ? CAUSE_INST_ACCESS :
+				(inst_page_fault_id ? CAUSE_INST_PAGE_FAULT : CAUSE_ILLEGAL_INST);
+			id_ex_q.exception_tval  <= (inst_access_fault_id || inst_page_fault_id) ? pc_id : 64'b0;
 			id_ex_q.is_branch       <= is_branch_id;
 			id_ex_q.is_jump         <= is_jump_id;
 			id_ex_q.is_jalr         <= is_jalr_id;
@@ -478,6 +482,8 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 	logic [63:0] amo_store_data_next_mem, amo_store_data_q, amo_write_data_mem;
 	logic [63:0] amo_wb_data_mem;
 	logic [31:0] amo_old_word_mem, amo_rs2_word_mem, amo_new_word_mem;
+	logic        mem_page_fault_mem;
+	logic [63:0] mem_page_fault_cause_mem;
 
 	assign regular_mem_access_mem = ex_mem_q.inst_valid && !ex_mem_q.exception_valid &&
 		!ex_mem_q.is_amo && (ex_mem_q.mem_read || ex_mem_q.mem_write);
@@ -507,8 +513,11 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 	assign amo_write_data_mem = ex_mem_q.is_sc ? store_data_aligned_mem : amo_store_data_q;
 	assign amo_wb_data_mem = ex_mem_q.is_sc ? {63'b0, sc_failed_mem} :
 		(amo_write_phase_q ? amo_saved_read_data_q : amo_read_data_mem);
+	assign mem_page_fault_mem = mem_access_mem && dresp.data_ok && dresp.page_fault;
+	assign mem_page_fault_cause_mem = (ex_mem_q.mem_read || ex_mem_q.is_lr) ?
+		CAUSE_LOAD_PAGE_FAULT : CAUSE_STORE_PAGE_FAULT;
 	assign system_event_mem = ex_mem_q.inst_valid &&
-		(ex_mem_q.exception_valid || ex_mem_q.is_ecall || ex_mem_q.is_mret);
+		(ex_mem_q.exception_valid || mem_page_fault_mem || ex_mem_q.is_ecall || ex_mem_q.is_mret);
 
 	always_comb begin
 		case (ex_mem_q.amo_op)
@@ -537,7 +546,7 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 			(ex_mem_q.is_lr && amo_read_phase_mem && dresp.data_ok) ||
 			(amo_write_phase_mem && dresp.data_ok)) begin
 			amo_write_phase_q <= 1'b0;
-		end else if (amo_rmw_mem && amo_read_phase_mem && dresp.data_ok) begin
+		end else if (amo_rmw_mem && amo_read_phase_mem && dresp.data_ok && !dresp.page_fault) begin
 			amo_write_phase_q     <= 1'b1;
 			amo_saved_read_data_q <= amo_read_data_mem;
 			amo_store_data_q      <= amo_store_data_next_mem;
@@ -549,7 +558,7 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 			reservation_valid_q <= 1'b0;
 			reservation_addr_q  <= 62'b0;
 		end else begin
-			if (amo_access_mem && ex_mem_q.is_lr && amo_read_phase_mem && dresp.data_ok) begin
+			if (amo_access_mem && ex_mem_q.is_lr && amo_read_phase_mem && dresp.data_ok && !dresp.page_fault) begin
 				reservation_valid_q <= 1'b1;
 				reservation_addr_q  <= ex_mem_q.alu_result[63:2];
 			end
@@ -565,6 +574,9 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 		(ex_mem_q.mem_write ? store_strobe_mem : 8'b0) :
 		(amo_write_phase_mem ? store_strobe_mem : 8'b0);
 	assign dreq.data   = regular_mem_access_mem ? store_data_aligned_mem : amo_write_data_mem;
+	assign dreq.access = regular_mem_access_mem ?
+		(ex_mem_q.mem_write ? MEM_ACCESS_STORE : MEM_ACCESS_LOAD) :
+		(ex_mem_q.is_lr ? MEM_ACCESS_LOAD : MEM_ACCESS_STORE);
 
 	// ========== 9. MEM_WB Reg ==========
 	always_ff @(posedge clk) begin
@@ -583,9 +595,11 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 			mem_wb_q.mem_read        <= ex_mem_q.mem_read;
 			mem_wb_q.mem_write       <= ex_mem_q.mem_write;
 			mem_wb_q.reg_write       <= ex_mem_q.reg_write;
-			mem_wb_q.exception_valid <= ex_mem_q.exception_valid;
-			mem_wb_q.exception_cause <= ex_mem_q.exception_cause;
-			mem_wb_q.exception_tval  <= ex_mem_q.exception_tval;
+			mem_wb_q.exception_valid <= ex_mem_q.exception_valid || mem_page_fault_mem;
+			mem_wb_q.exception_cause <= mem_page_fault_mem ?
+				mem_page_fault_cause_mem : ex_mem_q.exception_cause;
+			mem_wb_q.exception_tval  <= mem_page_fault_mem ?
+				ex_mem_q.alu_result : ex_mem_q.exception_tval;
 			mem_wb_q.is_sc           <= ex_mem_q.is_sc;
 			mem_wb_q.sc_failed       <= ex_mem_q.is_sc && sc_failed_mem;
 			mem_wb_q.is_csr          <= ex_mem_q.is_csr;

@@ -19,7 +19,7 @@
 - `Makefile` 已有 `test-labplus-2/3/4` 目标。
 - `ready-to-run/lab+/` 已有 Lab+2/3/4 的 `.bin` 输入和对应反汇编文本。
 - `docs/report.md` 当前仍是 Lab6 报告，不是 Lab+ 报告。
-- 当前代码已支持 RV64M 乘除法、第一阶段静态分支预测、Lab+3 需要的 LR/SC、完整 32-bit AMO RMW 指令，以及 `pmpaddr0/pmpcfg0` entry0 NAPOT R/W/X 权限检查；仍未实现 page fault、cache、完整 xv6 磁盘 MMIO 支持。
+- 当前代码已支持 RV64M 乘除法、第一阶段静态分支预测、Lab+3 需要的 LR/SC、完整 32-bit AMO RMW 指令、`pmpaddr0/pmpcfg0` entry0 NAPOT R/W/X 权限检查，以及 MMU page fault 核心路径；仍未实现 S-mode trap/delegation/`sret`、cache、完整 xv6 磁盘 MMIO 支持。
 
 ## 已完成记录
 
@@ -169,6 +169,29 @@
   - Lab4：通过，`HIT GOOD TRAP at pc = 0x8001fff8`。
   - Lab5：输出 `Return from init! Test passed`。
   - Lab6：输出 `Privileged test finished.` / `Exit with code = 0`，采用显式 cycle cap，避免命令长时间占住终端。
+
+### 2026-06-14：完成任务 9
+
+- 分文档：`Doc/Lab+/labplus_mmu_page_fault_report.md`。
+- 已实现 MMU page fault 核心路径：
+  - 增加 instruction/load/store page fault cause。
+  - IBus/DBus/CBus 请求增加访问类型，响应增加 `page_fault` 标志。
+  - `MMU.sv` 对 invalid PTE、`W && !R`、非叶子走到底、R/W/X/A/D 权限、基本 U-mode 权限和 superpage 对齐错误产生 page fault。
+  - page fault 时不发起最终访存，而是向 core 返回 fault 响应。
+  - `core.sv` 在 IF/MEM 侧分别转成 instruction/load/store page fault，并写入虚拟地址作为 `mtval`。
+- 已新增诊断型裸机自测生成器：
+  - `ready-to-run/lab+/4/gen_page_fault_test.py`
+  - `ready-to-run/lab+/4/page_fault_load.bin/.S`
+  - `ready-to-run/lab+/4/page_fault_store.bin/.S`
+  - `ready-to-run/lab+/4/page_fault_inst.bin/.S`
+- 已验证：
+  - `make sim`：构建通过。
+  - Lab4：通过，`HIT GOOD TRAP at pc = 0x8001fff8`。
+  - Lab5：输出 `Return from init! Test passed`。
+  - Lab6：输出 `Privileged test finished.` / `Exit with code = 0`。
+  - Lab+3：通过，`HIT GOOD TRAP at pc = 0x800000dc`。
+  - Lab+4：前置特权/PMP 子测仍输出 `Single test passed.`。
+  - 诊断型 load page fault 自测在 Difftest 下可见 DUT 于 `ld` 处写出 `mcause=13`、`mepc=0x80000084`、`mtval=0x40000000`；no-diff good-trap 收尾仍不稳定，暂不作为通过判据。
 
 ## TODO 顺序
 
@@ -386,28 +409,30 @@
 - 产出：
   - PMP Bonus 的核心报告材料：`Doc/Lab+/labplus4_pmp_report.md`。
 
-### 9. 实现 MMU page fault
+### 9. 实现 MMU page fault（已完成核心路径）
 
 - 成本：高
 - 优先级：低到中
 - 依赖：现有 MMU、trap 路径；若和 S-mode 配合，则依赖任务 10
 - 目标：补齐 Lab5/Lab6 相关 Bonus，并为更完整 xv6 做准备。
 - 当前状态：
-  - `MMU.sv` 对 invalid PTE 当前采用虚拟地址直通回退。
-  - 未见 page fault cause 常量。
-  - 报告中已明确写“未实现缺页异常”。
+  - `MMU.sv` 已不再对 invalid PTE 做虚拟地址直通回退，而是返回 page fault。
+  - 已补齐 instruction/load/store page fault cause 常量。
+  - 已通过总线 fault 标志把 MMU fault 反馈给 core。
+  - 已在 IF/MEM 侧接入 page fault 异常，并设置 `mcause` / `mtval`。
 - 要做：
-  - 无效 PTE 触发 instruction/load/store page fault。
-  - 检查 PTE R/W/X/U/A/D 等权限位。
-  - 区分取指、load、store 的 fault cause。
-  - 将 MMU fault 反馈给 core，并在 WB 或合适提交边界进入 trap。
-  - 避免 page fault 后仍发起错误的最终访存。
+  - 已让无效 PTE 触发 instruction/load/store page fault。
+  - 已检查 PTE R/W/X/U/A/D 等权限位。
+  - 已区分取指、load、store 的 fault cause。
+  - 已将 MMU fault 反馈给 core，并在 IF/MEM 到 WB 的既有异常路径进入 trap。
+  - 已避免 page fault 后发起错误的最终访存。
 - 验证：
-  - Lab5 回归。
-  - 若有自测，构造 invalid PTE / 权限错误 PTE。
-  - `make test-labplus-4` 视测试覆盖情况观察。
+  - Lab5 回归：输出 `Return from init! Test passed`。
+  - Lab4/Lab6/Lab+3 回归通过关键成功线。
+  - Lab+4 前置特权/PMP 子测仍输出 `Single test passed.`。
+  - 新增 page fault 诊断型自测，Difftest 可见 DUT 产生预期 load page fault 状态；no-diff good-trap 收尾仍需后续完善。
 - 产出：
-  - 缺页异常 Bonus 报告材料。
+  - 缺页异常 Bonus 报告材料：`Doc/Lab+/labplus_mmu_page_fault_report.md`。
 
 ### 10. 完善 S-mode trap / delegation / sret
 
@@ -511,14 +536,14 @@
 - 任务 4：性能统计。（已完成）
 - 任务 5：简单分支预测。（已完成）
 - 任务 6：Lab+3 原子指令最小集合。（已完成）
-- 任务 8：PMP 权限检查。
+- 任务 8：PMP 权限检查。（已完成）
 
 目标：围绕 `test-labplus-2/3/4` 做可验证功能。
 
 ### 第三批：高成本探索
 
 - 任务 7：完整 32-bit AMO。（已完成）
-- 任务 9：page fault。
+- 任务 9：page fault。（已完成核心路径）
 - 任务 10：S-mode trap / delegation / sret。
 - 任务 11：完整 xv6 主 Track。
 
@@ -533,6 +558,6 @@
 
 ## 当前最推荐的下一步
 
-任务 0-8 已完成。下一步优先做任务 9：实现 MMU page fault。
+任务 0-9 已完成。下一步优先做任务 10：完善 S-mode trap / delegation / sret。
 
-理由：PMP/access fault 的前置阻塞已解除；若继续推进 Lab+4/Lab5/Lab6 的异常完整性，page fault 是更关键的剩余缺口。
+理由：page fault 核心路径已具备；若继续推进更完整的特权架构和 xv6 主 Track，下一处关键缺口是 S-mode trap/delegation/`sret`。
