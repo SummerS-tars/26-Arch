@@ -207,22 +207,35 @@ typedef struct packed {
     u32 data;           // the data read from cache
 } ibus_resp_t;
 
-typedef enum logic [3:0] {
-    ALU_ADD  = 4'd0,
-    ALU_SUB  = 4'd1,
-    ALU_ADDW = 4'd2,
-    ALU_SUBW = 4'd3,
-    ALU_AND  = 4'd4,
-    ALU_OR   = 4'd5,
-    ALU_XOR  = 4'd6,
-    ALU_SLL  = 4'd7,
-    ALU_SRL  = 4'd8,
-    ALU_SRA  = 4'd9,
-    ALU_SLT  = 4'd10,
-    ALU_SLTU = 4'd11,
-    ALU_SLLW = 4'd12,
-    ALU_SRLW = 4'd13,
-    ALU_SRAW = 4'd14
+typedef enum logic [4:0] {
+    ALU_ADD    = 5'd0,
+    ALU_SUB    = 5'd1,
+    ALU_ADDW   = 5'd2,
+    ALU_SUBW   = 5'd3,
+    ALU_AND    = 5'd4,
+    ALU_OR     = 5'd5,
+    ALU_XOR    = 5'd6,
+    ALU_SLL    = 5'd7,
+    ALU_SRL    = 5'd8,
+    ALU_SRA    = 5'd9,
+    ALU_SLT    = 5'd10,
+    ALU_SLTU   = 5'd11,
+    ALU_SLLW   = 5'd12,
+    ALU_SRLW   = 5'd13,
+    ALU_SRAW   = 5'd14,
+    ALU_MUL    = 5'd15,
+    ALU_MULH   = 5'd16,
+    ALU_MULHSU = 5'd17,
+    ALU_MULHU  = 5'd18,
+    ALU_DIV    = 5'd19,
+    ALU_DIVU   = 5'd20,
+    ALU_REM    = 5'd21,
+    ALU_REMU   = 5'd22,
+    ALU_MULW   = 5'd23,
+    ALU_DIVW   = 5'd24,
+    ALU_DIVUW  = 5'd25,
+    ALU_REMW   = 5'd26,
+    ALU_REMUW  = 5'd27
 } alu_op_t;
 
 typedef enum logic [1:0] {

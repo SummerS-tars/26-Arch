@@ -81,26 +81,51 @@ module core_decode import common::*;(
             end
             7'b0110011: begin
                 decode_out.reg_write = 1'b1;
-                case (decode_out.funct3)
-                    3'b000: decode_out.alu_op = decode_out.funct7[5] ? ALU_SUB : ALU_ADD;
-                    3'b001: decode_out.alu_op = ALU_SLL;
-                    3'b010: decode_out.alu_op = ALU_SLT;
-                    3'b011: decode_out.alu_op = ALU_SLTU;
-                    3'b100: decode_out.alu_op = ALU_XOR;
-                    3'b101: decode_out.alu_op = decode_out.funct7[5] ? ALU_SRA : ALU_SRL;
-                    3'b110: decode_out.alu_op = ALU_OR;
-                    3'b111: decode_out.alu_op = ALU_AND;
-                    default: ;
-                endcase
+                if (decode_out.funct7 == 7'b0000001) begin
+                    case (decode_out.funct3)
+                        3'b000: decode_out.alu_op = ALU_MUL;
+                        3'b001: decode_out.alu_op = ALU_MULH;
+                        3'b010: decode_out.alu_op = ALU_MULHSU;
+                        3'b011: decode_out.alu_op = ALU_MULHU;
+                        3'b100: decode_out.alu_op = ALU_DIV;
+                        3'b101: decode_out.alu_op = ALU_DIVU;
+                        3'b110: decode_out.alu_op = ALU_REM;
+                        3'b111: decode_out.alu_op = ALU_REMU;
+                        default: ;
+                    endcase
+                end else begin
+                    case (decode_out.funct3)
+                        3'b000: decode_out.alu_op = decode_out.funct7[5] ? ALU_SUB : ALU_ADD;
+                        3'b001: decode_out.alu_op = ALU_SLL;
+                        3'b010: decode_out.alu_op = ALU_SLT;
+                        3'b011: decode_out.alu_op = ALU_SLTU;
+                        3'b100: decode_out.alu_op = ALU_XOR;
+                        3'b101: decode_out.alu_op = decode_out.funct7[5] ? ALU_SRA : ALU_SRL;
+                        3'b110: decode_out.alu_op = ALU_OR;
+                        3'b111: decode_out.alu_op = ALU_AND;
+                        default: ;
+                    endcase
+                end
             end
             7'b0111011: begin
                 decode_out.reg_write = 1'b1;
-                case (decode_out.funct3)
-                    3'b000: decode_out.alu_op = decode_out.funct7[5] ? ALU_SUBW : ALU_ADDW;
-                    3'b001: decode_out.alu_op = ALU_SLLW;
-                    3'b101: decode_out.alu_op = decode_out.funct7[5] ? ALU_SRAW : ALU_SRLW;
-                    default: ;
-                endcase
+                if (decode_out.funct7 == 7'b0000001) begin
+                    case (decode_out.funct3)
+                        3'b000: decode_out.alu_op = ALU_MULW;
+                        3'b100: decode_out.alu_op = ALU_DIVW;
+                        3'b101: decode_out.alu_op = ALU_DIVUW;
+                        3'b110: decode_out.alu_op = ALU_REMW;
+                        3'b111: decode_out.alu_op = ALU_REMUW;
+                        default: ;
+                    endcase
+                end else begin
+                    case (decode_out.funct3)
+                        3'b000: decode_out.alu_op = decode_out.funct7[5] ? ALU_SUBW : ALU_ADDW;
+                        3'b001: decode_out.alu_op = ALU_SLLW;
+                        3'b101: decode_out.alu_op = decode_out.funct7[5] ? ALU_SRAW : ALU_SRLW;
+                        default: ;
+                    endcase
+                end
             end
             7'b0110111: begin
                 decode_out.reg_write = 1'b1;

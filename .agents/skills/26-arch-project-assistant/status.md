@@ -25,16 +25,19 @@ Update it whenever the current implementation stage or verified support boundary
   - `core_decode.sv`, `core_alu.sv`, `core_regfile.sv`, `core_forwarding_unit.sv`, `core_hazard_unit.sv`, `core_csr.sv`
 - Shared packages: `trap_pkg`, `mem_helpers_pkg`, pipeline packets in `common.sv`
 - Bus path: `IBusToCBus` + `DBusToCBus` + `CBusArbiter` + `MMU` (MMU flushes walk on satp/priv change)
+- RV64M integer multiply/divide support is implemented in decode/ALU
 - Lab 1–6 behavior preserved after refactor
 
 ## Current validation snapshot
 
 | Target | Result |
 |--------|--------|
+| `make sim` | pass — after RV64M implementation |
+| Lab1 extra direct run | pass — `HIT GOOD TRAP at pc = 0x8002001c` |
 | `make test-lab4` | pass — post-refactor verified |
 | `make test-lab5` | pass — `Return from init! Test passed` |
 | `make test-lab6` | pass — `Privileged test finished.` / `Exit with code = 0` |
-| Lab+2 direct run | fail — Difftest mismatch at `pc = 0x80000bc4`, `mulw` result differs |
+| Lab+2 direct run | partial — qsort passed; 90s wall timeout during queen |
 | Lab+3 direct run | fail — Difftest mismatch at `pc = 0x80000028`, first `amoswap.w` unsupported |
 | Lab+4 direct run | fail — no-diff run exceeds cycle limit at `pc = 0x0` with explicit cycle cap |
 
@@ -52,7 +55,7 @@ Steps 1–7 from `Doc/Refactor_TODO.md` are done on branch `refactor/before_labp
 
 ## Likely next direction
 
-1. Implement M extension first; Lab+2 baseline currently fails on `mulw`.
+1. Continue Lab+2 microbench: determine whether queen timeout is performance-only or a new correctness issue.
 2. Implement A extension minimal set (`amoswap.w`, `amoadd.w`, `lr.w`, `sc.w`) for Lab+3.
 3. Implement PMP/access fault path for Lab+4 after M/A baselines are understood.
 4. Revisit IBus addr latch / CBus `saved_req` hold after lab+ with board regression if needed.

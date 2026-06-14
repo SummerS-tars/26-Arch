@@ -38,6 +38,20 @@
   - Lab5：Sv39 MMU 和上级 leaf PTE 地址拼接，可作为巨页支持说明。
   - Lab6：异常/中断主线已完成；缺页异常和单独“时钟中断处理程序打印内容”未完成。
 
+### 2026-06-14：完成任务 2
+
+- 已实现 RV64M 乘除法：
+  - 64-bit：`mul`、`mulh`、`mulhsu`、`mulhu`、`div`、`divu`、`rem`、`remu`。
+  - 32-bit W 版本：`mulw`、`divw`、`divuw`、`remw`、`remuw`。
+  - 已处理除零、`INT_MIN / -1` 溢出、W 指令结果符号扩展等语义。
+- 已验证：
+  - `make sim`：构建通过。
+  - Lab1 extra 直连运行：通过，`HIT GOOD TRAP at pc = 0x8002001c`。
+  - Lab4 直连运行：通过，`HIT GOOD TRAP at pc = 0x8001fff8`。
+  - Lab5 直连运行：通过，输出 `Return from init! Test passed`。
+  - Lab6 直连运行：通过，输出 `Privileged test finished.` / `Exit with code = 0`。
+  - Lab+2 直连运行：已越过原先 `mulw` mismatch，`qsort` 显示 `* Passed.`；后续在 `queen` 阶段因 90 秒 wall timeout 停止，留给任务 3 继续处理。
+
 ## TODO 顺序
 
 ### 0. 确认 Lab+ 测试输入并建立失败基线（已完成）
@@ -81,28 +95,26 @@
 - 产出：
   - 已形成 Lab+ 报告中“已有工作整理”章节的要点。
 
-### 2. 实现 M 扩展乘除法
+### 2. 实现 M 扩展乘除法（已完成）
 
 - 成本：中低
 - 优先级：高
 - 依赖：无
 - 目标：补齐旧 Bonus 中最独立、最容易验证的一项。
 - 当前状态：
-  - `core_decode.sv` 未区分 `funct7 = 7'b0000001` 的 M 扩展。
-  - `core_alu.sv` 未见 `mul/div/rem` 相关运算。
-  - `lab1-extra` 通常用于验证乘除法。
-  - `microbench` 中也能看到 `mul/div/rem` 指令痕迹，因此它可能也是 Lab+ 性能测试的正确性前置条件。
+  - `core_decode.sv` 已区分 `funct7 = 7'b0000001` 的 M 扩展。
+  - `core_alu.sv` 已实现 `mul/div/rem` 及 W 版本语义。
+  - `lab1-extra` 已通过。
+  - Lab+2 已越过原先 `mulw` 失败点。
 - 要做：
-  - 在公共 ALU op 中加入 `mul/mulh/mulhsu/mulhu/div/divu/rem/remu`。
-  - 加入 `mulw/divw/divuw/remw/remuw`。
-  - 在 `core_decode.sv` 中按 opcode、funct3、funct7 正确译码。
-  - 注意除零、溢出、W 指令符号扩展等 RISC-V 语义。
+  - 已在公共 ALU op 中加入 `mul/mulh/mulhsu/mulhu/div/divu/rem/remu`。
+  - 已加入 `mulw/divw/divuw/remw/remuw`。
+  - 已在 `core_decode.sv` 中按 opcode、funct3、funct7 正确译码。
+  - 已处理除零、溢出、W 指令符号扩展等 RISC-V 语义。
 - 验证：
-  - `make test-lab1-extra`
-  - `make test-lab4`
-  - `make test-lab5`
-  - `make test-lab6`
-  - 若 `.bin` 已补齐，再跑 `make test-labplus-2`
+  - Lab1 extra 直连运行通过。
+  - Lab4/Lab5/Lab6 直连回归通过。
+  - Lab+2 已推进到 qsort 通过，完整 microbench 留给任务 3。
 - 产出：
   - 可在 Lab+ 报告中明确写“实现乘除法 Bonus”。
 
@@ -365,7 +377,7 @@
 
 - 任务 0：确认测试输入和失败基线。（已完成）
 - 任务 1：整理已有 Bonus 材料。（已完成）
-- 任务 2：实现 M 扩展乘除法。
+- 任务 2：实现 M 扩展乘除法。（已完成）
 - 任务 3：让 microbench 先正确跑起来。
 
 目标：快速形成 Lab+ 报告基础，并争取拿到乘除法和 microbench 正确性进展。
@@ -397,6 +409,6 @@
 
 ## 当前最推荐的下一步
 
-任务 0-1 已完成。下一步优先做任务 2：实现 M 扩展乘除法。
+任务 0-2 已完成。下一步优先做任务 3：让 Lab+2 microbench 完整跑起来。
 
-理由：Lab+2 的首个关键失败点已经落在 `mulw`，而 M 扩展相对独立，成本低于 PMP、page fault、完整 xv6，并且很可能是 microbench 正确运行的前置条件。
+理由：M 扩展完成后，Lab+2 已经从 `mulw` mismatch 推进到 qsort 通过。后续需要判断 `queen` 阶段是单纯运行时间较长，还是仍有新的正确性/性能阻塞点。
