@@ -38,7 +38,7 @@
 // never reuses the file-system image as free pages.
 #define KERNBASE 0x80000000L
 #define RAMDISK  0x87000000L
-#define PHYSTOP  RAMDISK
+#define PHYSTOP  (KERNBASE + 4 * 1024 * 1024)
 #define RAMDISK_SIZE (16 * 1024 * 1024)
 
 // map the trampoline page to the highest address,

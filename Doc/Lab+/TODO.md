@@ -538,7 +538,7 @@
   - 仿真器现已支持 `--fs-image`，可把第二镜像加载到 `0x8700_0000`，作为后续 RAM disk 路线的基础。
   - 已引入可修改 upstream `xv6-riscv` 源码到 `third_party/xv6-riscv/`，并增加顶层 `labplus-xv6-build` 构建入口。
   - 已安装 RISC-V GCC/binutils，并成功生成 `ready-to-run/lab+/11/xv6-kernel.bin` / `xv6-fs.img`。
-  - 已开始 xv6 侧 RAM disk/platform 适配，但当前尚无可见 console 输出，仍未进入可交互 shell。
+  - 已开始 xv6 侧 RAM disk/platform 适配；修正 RVC 编译问题后已能看到 full xv6 的 kernel boot banner，但仍未进入可交互 shell。
 - 要做：
   - 已决定本轮采用“仓库现有内容 + RAM disk 优先”的方向，不引入外部完整 xv6。
   - 已定位完整 xv6 的主要阻塞点是缺少完整软件输入和块设备/RAM disk 入口。
@@ -553,8 +553,10 @@
   - 已安装 `riscv64-unknown-elf-gcc` / `objcopy` 并验证构建入口可用。
   - 已将 xv6 侧 disk 路径从 virtio 替换为 RAM disk 内存拷贝。
   - 已裁剪 QEMU PLIC/SSTC timer 路径，并预留 `0x8700_0000` RAM disk 区域。
+  - 已将 xv6 编译默认架构从 `rv64gc` 改为 `rv64g`，避免当前 CPU 不支持的 RVC 压缩指令。
+  - 已恢复 `mret -> S-mode main` 路径；M-mode 直调 `main()` 会在 `forkret` 使用高地址 kernel stack 时触发 RAM 越界。
   - 已新增 S-mode timer delegation 诊断资产，但当前 no-diff 运行未形成 clean good/bad trap，说明 S-level timer interrupt 仍需后续专门处理。
-  - 后续若继续推进，需要定位 xv6 console 输出不可见问题，以及 stock `mret -> S-mode main` 早期启动失败问题。
+  - 后续若继续推进，需要定位用户态入口、`ecall`/trap 返回、console 文件或 RAM disk 文件系统路径中哪一步阻止 `init: starting sh` 输出。
 - 验证：
   - 已重跑 Lab5 裁剪 xv6：输出 `xv6 kernel is booting` 和 `Return from init! Test passed`。
   - 已重跑 Lab5 extra、Lab6、Lab+3 护栏。
@@ -568,6 +570,10 @@
   - 已运行适配后的 xv6 RAM disk 镜像：
     - `./build/emu --no-diff -i ./ready-to-run/lab+/11/xv6-kernel.bin --fs-image ./ready-to-run/lab+/11/xv6-fs.img -C 500000 -I 100000 --force-dump-result`
     - 输出 `Loaded 2048000 bytes ... to 0x87000000`，随后在 cycle/instr cap 停止；暂未看到 xv6 console 输出。
+  - 已进一步运行无 RVC、恢复 S-mode `mret` 的 xv6 镜像：
+    - 短跑可输出 `xv6 kernel is booting`。
+    - M-mode 直调 `main()` 会在 `forkret` 处因高地址 kernel stack 触发 `ram wIdx ... out of bound`。
+    - S-mode `mret` 路径可推进到 cycle cap 下 `pc = 0x0`，疑似已到用户虚拟地址入口附近，但仍未看到 `init: starting sh`。
   - 已尝试 `ready-to-run/lab+/11/smode_timer_diag.bin`，当前在 cycle cap 下停于早期 PC，暂作为诊断记录。
 - 产出：
   - “尝试了什么、卡在哪里、如何分析”的 Lab+ 报告材料：`Doc/Lab+/labplus_xv6_main_track_report.md`。

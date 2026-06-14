@@ -351,7 +351,7 @@ make labplus-xv6-build
 - `memlayout.h`：
   - 将 UART 改为当前平台 `0x4060_0000` 基址。
   - 增加 `RAMDISK = 0x8700_0000`。
-  - 将 `PHYSTOP` 降到 `RAMDISK`，避免页分配器覆盖 host 加载的 `xv6-fs.img`。
+  - 将 `PHYSTOP` 临时降到较小内存窗口，避免覆盖 host 加载的 `xv6-fs.img`，同时减少早期 `kinit()` 清零成本。
 - `virtio_disk.c`：
   - 保留 `virtio_disk_init/rw/intr` 接口名，替换实现为 RAM disk 内存拷贝。
   - `bread/bwrite` 仍通过原 buffer cache 路径访问块设备。
@@ -363,7 +363,7 @@ make labplus-xv6-build
   - kernel page table 不再映射 QEMU virtio/PLIC MMIO。
 - `start.c`：
   - 暂时裁剪 QEMU/SSTC timer。
-  - 当前为 bring-up 暂时绕过 stock `mret -> S-mode main`，直接进入 `main()`；完整 S-mode 启动仍需后续单独修。
+  - 后续已恢复 `mret -> S-mode main`，避免 M-mode 忽略 `satp` 后访问 xv6 高地址 kernel stack。
 
 验证：
 
@@ -379,7 +379,34 @@ Loaded 2048000 bytes from ./ready-to-run/lab+/11/xv6-fs.img to 0x87000000
 EXCEEDING CYCLE/INSTR LIMIT at pc = 0x61a4c
 ```
 
-解释：已能构建并长时间运行适配后的 xv6 镜像，RAM disk 镜像加载成功；但当前还没有可见 xv6 console 输出，也没有进入可交互 shell。下一步应优先定位 console/MMIO 输出不可见问题，以及 stock `mret` 到 S-mode 的早期启动失败问题。
+解释：该结果后来定位为软件镜像使用了 `rv64gc` 压缩指令，而当前核心没有实现 RVC；no-diff 下执行错误路径导致看不到 console。
+
+### 后续 bring-up 进展
+
+checkpoint 后继续尝试后期步骤，得到以下结论：
+
+- 将 xv6 编译目标从 `rv64gc` 改为默认 `rv64g` 后，difftest 不再在入口第 3 条指令处分叉。
+- 重新构建并运行后可以看到：
+
+```text
+xv6 kernel is booting
+```
+
+- 直接在 M-mode 调 `main()` 的临时方案会在 `forkret` 处访问 xv6 高地址 kernel stack，触发 RAM 越界：
+
+```text
+ERROR: ram wIdx = 0x7effffbff out of bound!
+ABORT at pc = 0x800022c0
+```
+
+  这是因为 M-mode 忽略 `satp`，不能验证 xv6 的高地址内核栈映射。
+- 恢复 `mret -> S-mode main` 后不再触发该越界，运行能推进到用户态入口附近，最终在 cycle cap 下停于：
+
+```text
+EXCEEDING CYCLE/INSTR LIMIT at pc = 0x0
+```
+
+  `pc = 0x0` 与 xv6 用户程序虚拟地址布局一致，但当前仍没有看到 `init: starting sh`，说明下一层阻塞应在用户态执行、`ecall`/trap 返回、console 文件或 RAM disk 文件系统路径中继续细分。
 
 ## S-mode timer 诊断尝试
 
@@ -411,8 +438,8 @@ EXCEEDING CYCLE/INSTR LIMIT at pc = 0x80000034 / 0x80000014
 
 - 当前仓库能稳定运行 Lab5 裁剪 xv6 到 `Return from init! Test passed`。
 - S-mode trap/delegation/`sret` 和 Lab+3 原子回归仍通过。
-- 仿真侧已具备 RAM disk/第二镜像加载入口，并已引入可修改 xv6 源码；当前缺少本机 RISC-V 工具链，尚不能生成 `kernel.bin` / `fs.img`。
-- 在不引入外部完整 xv6 的前提下，无法直接验证进入 shell。
-- RAM disk 加载链路微型自测已通过；后续最推荐在工具链可用后接入 xv6 侧 ramdisk 驱动。
+- 仿真侧已具备 RAM disk/第二镜像加载入口，并已引入可修改 xv6 源码；本机 RISC-V GCC/binutils 已可生成 `kernel.bin` / `fs.img`。
+- RAM disk 加载链路微型自测已通过，xv6 侧 RAM disk 驱动已接入到 buffer cache 路径。
+- 完整 xv6 已能打印 kernel boot banner，并在恢复 S-mode `mret` 后推进到用户态入口附近；当前尚未看到 `init: starting sh` 或进入可交互 shell。
 
-下一步若继续推进完整 xv6，建议先安装或提供 RISC-V GCC/binutils，然后构建 `xv6-kernel.bin` / `xv6-fs.img`；随后优先实现 xv6 侧 RAM disk 驱动。等能读文件系统和进入用户态后，再考虑 PLIC、virtio 或更完整 S-level interrupt 语义。
+下一步若继续推进完整 xv6，建议沿当前 `rv64g + RAM disk + S-mode mret` 路线继续缩小：先给 `init`/`usertrap`/`sys_open`/`sys_write` 增加轻量诊断，确认用户态第一批 `open("console")`、`mknod`、`dup` 和 `printf` 是否到达内核；之后再处理 console 输入、timer interrupt、PLIC 或 virtio。
