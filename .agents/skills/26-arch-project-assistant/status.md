@@ -8,19 +8,19 @@ Update it whenever the current implementation stage or verified support boundary
 ## Last checked
 
 - Date: 2026-06-14
-- Method: Refactor_TODO steps 1–7 + Lab+ tasks 0–9 + Lab4/Lab5/Lab6 recorded regression + Lab+ baseline runs
+- Method: Refactor_TODO steps 1–7 + Lab+ tasks 0–10 + Lab4/Lab5/Lab6 recorded regression + Lab+ baseline runs
 
 ## Current project understanding
 
 - Staged Fudan 26-Arch CPU project: simulation + Difftest + `ready-to-run/` tests + Vivado/board path.
 - Main student RTL lives under `vsrc/src/`; framework under `difftest/`, `vsrc/util/`.
-- Active milestone: Lab+ feature work in progress; tasks 0–9 from `Doc/Lab+/TODO.md` are completed.
+- Active milestone: Lab+ feature work in progress; tasks 0–10 from `Doc/Lab+/TODO.md` are completed.
 
 ## Current implementation snapshot
 
 - Modular **five-stage pipeline**:
-  - `core.sv` (~560 lines) — pipeline orchestration
-  - `core_trap_ctrl.sv` — WB trap/interrupt/ecall/mret
+  - `core.sv` — pipeline orchestration
+  - `core_trap_ctrl.sv` — WB trap/interrupt/ecall/mret/sret and M/S delegation decision
   - `core_difftest_adapter.sv` — Difftest hooks + skip rules
   - `core_decode.sv`, `core_alu.sv`, `core_regfile.sv`, `core_forwarding_unit.sv`, `core_hazard_unit.sv`, `core_csr.sv`
 - Shared packages: `trap_pkg`, `mem_helpers_pkg`, pipeline packets in `common.sv`
@@ -31,16 +31,18 @@ Update it whenever the current implementation stage or verified support boundary
 - Lab+3 A extension support covers `lr.w`, `sc.w`, and all 32-bit AMO RMW ops
 - Lab+4 PMP support covers `pmpaddr0/pmpcfg0` entry0 NAPOT R/W/X checks for U/S-mode fetch/load/store/AMO
 - MMU page fault core path is implemented for Sv39 invalid PTE, R/W/X/A/D checks, basic U-mode checks, and fault feedback to core
+- S-mode trap/delegation/`sret` core path is implemented: delegated traps write `sepc/scause/stval`, redirect to `stvec`, and `sret` restores `SPP/SPIE/SIE`
 - Lab 1–6 behavior preserved after refactor
 
 ## Current validation snapshot
 
 | Target | Result |
 |--------|--------|
-| `make sim` | pass — after MMU page fault implementation |
+| `make sim` | pass — after S-mode trap/delegation/sret implementation |
 | Lab1 extra direct run | pass — `HIT GOOD TRAP at pc = 0x8002001c` |
 | `make test-lab4` | pass — post-refactor verified |
 | `make test-lab5` | pass — `Return from init! Test passed` |
+| `make test-lab5-extra` | pass — `HIT GOOD TRAP at pc = 0x800002b4`, covers delegated U-mode ecall to S trap and `sret` return |
 | `make test-lab6` | pass — `Privileged test finished.` / `Exit with code = 0` |
 | Lab+2 direct run | partial — no mismatch; default delay passes qsort/queen before 600s timeout, `DELAY=0` passes qsort/queen/bf before 600s timeout |
 | Lab+2 perf sample | pass — 50M-cycle sample IPC 0.190101 after static branch prediction, branch prediction accuracy ~73.3% |
@@ -63,10 +65,10 @@ Steps 1–7 from `Doc/Refactor_TODO.md` are done on branch `refactor/before_labp
 
 ## Likely next direction
 
-1. Implement S-mode trap / delegation / `sret` if continuing toward a more complete privileged architecture.
+1. Try the full xv6 main Track only after deciding how to handle block device/MMIO.
 2. Polish the standalone page-fault no-diff self-test harness if a clean GOOD TRAP artifact is desired.
-3. Consider BHT/BTB only after functional Lab+ exception work is improved.
-4. Consider 64-bit AMO D only if the bonus scope explicitly needs it.
+3. Refine full S-level interrupt priority/pending and SUM/MXR/TSR/TW/TVM semantics if aiming beyond the current core S-mode trap path.
+4. Consider BHT/BTB or 64-bit AMO D only if the bonus scope explicitly needs them.
 
 ## Update rule
 

@@ -26,8 +26,11 @@ module core_csr
     input  u64         trap_mcause,
     input  u64         trap_mtval,
     input  priv_mode_t trap_prev_priv,
+    input  logic       trap_to_s,
     input  logic       mret_wen,
     output priv_mode_t mret_priv,
+    input  logic       sret_wen,
+    output priv_mode_t sret_priv,
 
     output u64        mstatus,
     output u64        mstatus_pre_trap,
@@ -77,6 +80,19 @@ module core_csr
         end
     endfunction
 
+    function automatic u64 mstatus_on_s_trap(
+        input u64 status,
+        input priv_mode_t prev_priv
+    );
+        begin
+            mstatus_on_s_trap = status;
+            mstatus_on_s_trap[5] = status[1];          // SPIE <- SIE
+            mstatus_on_s_trap[1] = 1'b0;               // SIE <- 0
+            mstatus_on_s_trap[8] = (prev_priv == PRIV_S); // SPP <- previous privilege
+            mstatus_on_s_trap = mstatus_on_s_trap & MSTATUS_MASK;
+        end
+    endfunction
+
     function automatic u64 mstatus_on_mret(input u64 status);
         priv_mode_t old_mpp;
         begin
@@ -88,6 +104,17 @@ module core_csr
             if (old_mpp != PRIV_M)
                 mstatus_on_mret[17] = 1'b0;       // MPRV <- 0 when returning below M
             mstatus_on_mret = mstatus_on_mret & MSTATUS_MASK;
+        end
+    endfunction
+
+    function automatic u64 mstatus_on_sret(input u64 status);
+        begin
+            mstatus_on_sret = status;
+            mstatus_on_sret[1]  = status[5]; // SIE <- SPIE
+            mstatus_on_sret[5]  = 1'b1;      // SPIE <- 1
+            mstatus_on_sret[8]  = 1'b0;      // SPP <- U
+            mstatus_on_sret[17] = 1'b0;      // MPRV <- 0 when returning below M
+            mstatus_on_sret = mstatus_on_sret & MSTATUS_MASK;
         end
     endfunction
 
@@ -216,15 +243,27 @@ module core_csr
         end
 
         if (trap_wen) begin
-            mstatus_view = mstatus_on_trap(
-                mstatus_after_write(mstatus_q, wen, waddr, write_next),
-                trap_prev_priv
-            );
-            mepc_view    = trap_mepc;
-            mcause_view  = trap_mcause;
-            mtval_view   = trap_mtval;
+            if (trap_to_s) begin
+                mstatus_view = mstatus_on_s_trap(
+                    mstatus_after_write(mstatus_q, wen, waddr, write_next),
+                    trap_prev_priv
+                );
+                sepc_view    = trap_mepc;
+                scause_view  = trap_mcause;
+                stval_view   = trap_mtval;
+            end else begin
+                mstatus_view = mstatus_on_trap(
+                    mstatus_after_write(mstatus_q, wen, waddr, write_next),
+                    trap_prev_priv
+                );
+                mepc_view    = trap_mepc;
+                mcause_view  = trap_mcause;
+                mtval_view   = trap_mtval;
+            end
         end else if (mret_wen) begin
             mstatus_view = mstatus_on_mret(mstatus_q);
+        end else if (sret_wen) begin
+            mstatus_view = mstatus_on_sret(mstatus_q);
         end
     end
 
@@ -283,21 +322,34 @@ module core_csr
             end
 
             if (trap_wen) begin
-                mstatus_q <= mstatus_on_trap(
-                    mstatus_after_write(mstatus_q, wen, waddr, write_next),
-                    trap_prev_priv
-                );
-                mepc_q    <= trap_mepc;
-                mcause_q  <= trap_mcause;
-                mtval_q   <= trap_mtval;
+                if (trap_to_s) begin
+                    mstatus_q <= mstatus_on_s_trap(
+                        mstatus_after_write(mstatus_q, wen, waddr, write_next),
+                        trap_prev_priv
+                    );
+                    sepc_q    <= trap_mepc;
+                    scause_q  <= trap_mcause;
+                    stval_q   <= trap_mtval;
+                end else begin
+                    mstatus_q <= mstatus_on_trap(
+                        mstatus_after_write(mstatus_q, wen, waddr, write_next),
+                        trap_prev_priv
+                    );
+                    mepc_q    <= trap_mepc;
+                    mcause_q  <= trap_mcause;
+                    mtval_q   <= trap_mtval;
+                end
             end else if (mret_wen) begin
                 mstatus_q <= mstatus_on_mret(mstatus_q);
+            end else if (sret_wen) begin
+                mstatus_q <= mstatus_on_sret(mstatus_q);
             end
         end
     end
 
     // ----- architectural outputs -----
     assign mret_priv = priv_mode_t'(mstatus_q[12:11]);
+    assign sret_priv = mstatus_q[8] ? PRIV_S : PRIV_U;
     assign mstatus  = mstatus_view;
     assign mstatus_pre_trap = mstatus_q;
     assign sstatus  = mstatus_view & SSTATUS_MASK;

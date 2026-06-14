@@ -19,7 +19,7 @@
 - `Makefile` 已有 `test-labplus-2/3/4` 目标。
 - `ready-to-run/lab+/` 已有 Lab+2/3/4 的 `.bin` 输入和对应反汇编文本。
 - `docs/report.md` 当前仍是 Lab6 报告，不是 Lab+ 报告。
-- 当前代码已支持 RV64M 乘除法、第一阶段静态分支预测、Lab+3 需要的 LR/SC、完整 32-bit AMO RMW 指令、`pmpaddr0/pmpcfg0` entry0 NAPOT R/W/X 权限检查，以及 MMU page fault 核心路径；仍未实现 S-mode trap/delegation/`sret`、cache、完整 xv6 磁盘 MMIO 支持。
+- 当前代码已支持 RV64M 乘除法、第一阶段静态分支预测、Lab+3 需要的 LR/SC、完整 32-bit AMO RMW 指令、`pmpaddr0/pmpcfg0` entry0 NAPOT R/W/X 权限检查、MMU page fault 核心路径，以及 S-mode trap/delegation/`sret` 核心闭环；仍未实现 cache、完整 xv6 磁盘 MMIO 支持。
 
 ## 已完成记录
 
@@ -192,6 +192,29 @@
   - Lab+3：通过，`HIT GOOD TRAP at pc = 0x800000dc`。
   - Lab+4：前置特权/PMP 子测仍输出 `Single test passed.`。
   - 诊断型 load page fault 自测在 Difftest 下可见 DUT 于 `ld` 处写出 `mcause=13`、`mepc=0x80000084`、`mtval=0x40000000`；no-diff good-trap 收尾仍不稳定，暂不作为通过判据。
+
+### 2026-06-14：完成任务 10
+
+- 分文档：`Doc/Lab+/labplus_smode_trap_report.md`。
+- 已实现 S-mode trap/delegation/`sret` 核心闭环：
+  - `core_decode.sv` 增加 `sret` 译码。
+  - 流水线 packet 增加 `is_sret` 并从 ID 透传到 WB。
+  - `csr.sv` 放开 `SSTATUS_MASK`、`MEDELEG_MASK`、`MIDELEG_MASK`。
+  - `core_trap_ctrl.sv` 根据 `medeleg/mideleg` 和当前特权级决定 trap 进入 M-mode 或 S-mode。
+  - S-mode trap 写 `sepc/scause/stval` 并重定向到 `stvec`。
+  - `sret` 从 `sepc` 返回，并按 `SPP/SPIE/SIE` 恢复特权级和状态位。
+- 已验证：
+  - `make sim`：构建通过。
+  - Lab5 extra S-mode bonus：`HIT GOOD TRAP at pc = 0x800002b4`，覆盖 `mret -> S-mode -> sret -> U-mode ecall -> delegated S-trap -> sret`。
+  - Lab4：通过，`HIT GOOD TRAP at pc = 0x8001fff8`。
+  - Lab5：输出 `Return from init! Test passed`。
+  - Lab6：输出 `Privileged test finished.` / `Exit with code = 0`。
+  - Lab+3：通过，`HIT GOOD TRAP at pc = 0x800000dc`。
+  - Lab+4：前置 privileged/PMP 子测仍输出 `Single test passed.`。
+- 边界：
+  - 暂未实现 `TSR/TW/TVM` 的完整非法化语义。
+  - 暂未完整实现 `SUM/MXR` 对 MMU 权限的影响。
+  - `mideleg` 路径已接入，但现有硬件中断源仍以 machine interrupt cause 为主，完整 S-level interrupt pending/priority 可后续细化。
 
 ## TODO 顺序
 
@@ -434,28 +457,28 @@
 - 产出：
   - 缺页异常 Bonus 报告材料：`Doc/Lab+/labplus_mmu_page_fault_report.md`。
 
-### 10. 完善 S-mode trap / delegation / sret
+### 10. 完善 S-mode trap / delegation / sret（已完成核心闭环）
 
 - 成本：高
 - 优先级：低
 - 依赖：任务 9；若目标是完整 xv6，则必需
 - 目标：从“有 S-mode CSR”升级为“真正支持 S-mode trap 生态”。
 - 当前状态：
-  - CSR 中已有 `stvec/sepc/scause/stval/sstatus/sie/sip/medeleg/mideleg`。
-  - 当前 trap 控制主要进入 M-mode，重定向到 `mtvec`。
-  - `core_decode.sv` 未见 `sret` 译码。
+  - CSR 中已有并已接入 `stvec/sepc/scause/stval/sstatus/sie/sip/medeleg/mideleg`。
+  - trap 控制已能根据 `medeleg/mideleg` 选择进入 M-mode 或 S-mode。
+  - `core_decode.sv` 已支持 `sret` 译码。
 - 要做：
-  - 增加 `sret`。
-  - 根据 `medeleg/mideleg` 决定 trap 进入 M-mode 还是 S-mode。
-  - S-mode trap 写 `sepc/scause/stval`，跳转 `stvec`。
-  - `sret` 恢复 `sstatus.SPP/SPIE/SIE` 和特权级。
-  - 重新检查中断 pending 与 delegation 的关系。
+  - 已增加 `sret`。
+  - 已根据 `medeleg/mideleg` 决定 trap 进入 M-mode 还是 S-mode。
+  - 已支持 S-mode trap 写 `sepc/scause/stval`，跳转 `stvec`。
+  - 已支持 `sret` 恢复 `sstatus.SPP/SPIE/SIE` 和特权级。
+  - 已接入 interrupt delegation 判断；完整 S-level interrupt pending/priority 后续可继续细化。
 - 验证：
-  - 自写 S-mode trap 测试。
-  - Lab4/Lab5/Lab6 回归。
+  - 已用 Lab5 extra S-mode bonus 覆盖 S-mode trap 闭环。
+  - Lab4/Lab5/Lab6 回归通过关键成功线。
   - 为完整 xv6 运行做准备。
 - 产出：
-  - 特权架构扩展说明。
+  - 特权架构扩展说明：`Doc/Lab+/labplus_smode_trap_report.md`。
 
 ### 11. 尝试完整 xv6 主 Track
 
@@ -544,7 +567,7 @@
 
 - 任务 7：完整 32-bit AMO。（已完成）
 - 任务 9：page fault。（已完成核心路径）
-- 任务 10：S-mode trap / delegation / sret。
+- 任务 10：S-mode trap / delegation / sret。（已完成核心闭环）
 - 任务 11：完整 xv6 主 Track。
 
 目标：为高分 Bonus 或更完整系统能力做准备。
@@ -558,6 +581,6 @@
 
 ## 当前最推荐的下一步
 
-任务 0-9 已完成。下一步优先做任务 10：完善 S-mode trap / delegation / sret。
+任务 0-10 已完成。下一步可以开始任务 11：尝试完整 xv6 主 Track；若想先压低风险，也可以先完善 page fault no-diff 自测收尾或 S-level interrupt 细节。
 
-理由：page fault 核心路径已具备；若继续推进更完整的特权架构和 xv6 主 Track，下一处关键缺口是 S-mode trap/delegation/`sret`。
+理由：S-mode trap/delegation/`sret` 核心闭环已具备；继续往完整 xv6 推进时，剩余主要缺口转向块设备/MMIO、完整权限细节与更完整系统自测。

@@ -304,6 +304,7 @@ typedef struct packed {
     logic    is_csr;
     logic    is_ecall;
     logic    is_mret;
+    logic    is_sret;
     logic    is_illegal;
     csr_op_t csr_op;
     csr_addr_t csr_addr;
@@ -346,6 +347,7 @@ typedef struct packed {
     logic      is_csr;
     logic      is_ecall;
     logic      is_mret;
+    logic      is_sret;
     csr_op_t   csr_op;
     csr_addr_t csr_addr;
     logic      csr_uses_imm;
@@ -375,6 +377,7 @@ typedef struct packed {
     logic      is_csr;
     logic      is_ecall;
     logic      is_mret;
+    logic      is_sret;
     logic      csr_write_enable;
     csr_op_t   csr_op;
     csr_addr_t csr_addr;
@@ -402,6 +405,7 @@ typedef struct packed {
     logic      is_csr;
     logic      is_ecall;
     logic      is_mret;
+    logic      is_sret;
     logic      csr_write_enable;
     csr_op_t   csr_op;
     csr_addr_t csr_addr;

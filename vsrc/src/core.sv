@@ -29,10 +29,10 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 	logic [63:0] system_redirect_target_wb;
 	logic        commit_fire_wb, commit_valid_wb;
 	logic        system_event_ex, system_event_mem, system_flush_front;
-	logic        csr_trap_wen_wb, csr_mret_wen_wb;
+	logic        csr_trap_wen_wb, csr_trap_to_s_wb, csr_mret_wen_wb, csr_sret_wen_wb;
 	logic [63:0] csr_trap_mepc_wb, csr_trap_mcause_wb, csr_trap_mtval_wb;
 	logic        csr_write_wb_fire;
-	priv_mode_t  priv_mode_q, priv_mode_view, csr_mret_priv;
+	priv_mode_t  priv_mode_q, priv_mode_view, csr_mret_priv, csr_sret_priv;
 	logic [63:0] csr_pmpaddr0, csr_pmpcfg0;
 
 	id_ex_t  id_ex_q;
@@ -139,7 +139,7 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 	logic [63:0] imm_id;
 	alu_op_t     alu_op_id;
 	logic        alu_src_id, use_pc_id, is_branch_id, is_jump_id, is_jalr_id;
-	logic        is_csr_id, is_ecall_id, is_mret_id, csr_uses_imm_id;
+	logic        is_csr_id, is_ecall_id, is_mret_id, is_sret_id, csr_uses_imm_id;
 	csr_op_t     csr_op_id;
 	csr_addr_t   csr_addr_id;
 	logic [63:0] csr_zimm_id;
@@ -177,6 +177,7 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 	assign is_csr_id    = decode_id.is_csr;
 	assign is_ecall_id  = decode_id.is_ecall;
 	assign is_mret_id   = decode_id.is_mret;
+	assign is_sret_id   = decode_id.is_sret;
 	assign is_illegal_id = decode_id.is_illegal;
 	assign csr_op_id    = decode_id.csr_op;
 	assign csr_addr_id  = decode_id.csr_addr;
@@ -248,6 +249,7 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 			id_ex_q.is_csr          <= is_csr_id;
 			id_ex_q.is_ecall        <= is_ecall_id;
 			id_ex_q.is_mret         <= is_mret_id;
+			id_ex_q.is_sret         <= is_sret_id;
 			id_ex_q.csr_op          <= csr_op_id;
 			id_ex_q.csr_addr        <= csr_addr_id;
 			id_ex_q.csr_uses_imm    <= csr_uses_imm_id;
@@ -315,8 +317,11 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 		.trap_mcause (csr_trap_mcause_wb),
 		.trap_mtval (csr_trap_mtval_wb),
 		.trap_prev_priv (priv_mode_q),
+		.trap_to_s  (csr_trap_to_s_wb),
 		.mret_wen  (csr_mret_wen_wb),
 		.mret_priv (csr_mret_priv),
+		.sret_wen  (csr_sret_wen_wb),
+		.sret_priv (csr_sret_priv),
 		.mstatus   (csr_mstatus),
 		.mstatus_pre_trap (csr_mstatus_pre_trap),
 		.sstatus   (csr_sstatus),
@@ -423,7 +428,7 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 		((mem_misaligned_ex || pmp_load_access_fault_ex || pmp_store_access_fault_ex) ?
 		 alu_result_ex : id_ex_q.exception_tval);
 	assign system_event_ex = id_ex_q.inst_valid &&
-		(exception_valid_ex_eff || id_ex_q.is_ecall || id_ex_q.is_mret);
+		(exception_valid_ex_eff || id_ex_q.is_ecall || id_ex_q.is_mret || id_ex_q.is_sret);
 	assign branch_next_pc_ex = branch_taken_ex ? redirect_target_ex : (id_ex_q.pc + 64'd4);
 	assign branch_mispredict_ex = id_ex_q.inst_valid && id_ex_q.is_branch &&
 		!exception_valid_ex_eff &&
@@ -459,6 +464,7 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 			ex_mem_q.is_csr          <= id_ex_q.is_csr;
 			ex_mem_q.is_ecall        <= id_ex_q.is_ecall;
 			ex_mem_q.is_mret         <= id_ex_q.is_mret;
+			ex_mem_q.is_sret         <= id_ex_q.is_sret;
 			ex_mem_q.csr_write_enable <= csr_write_enable_ex;
 			ex_mem_q.csr_op          <= id_ex_q.csr_op;
 			ex_mem_q.csr_addr        <= id_ex_q.csr_addr;
@@ -517,7 +523,8 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 	assign mem_page_fault_cause_mem = (ex_mem_q.mem_read || ex_mem_q.is_lr) ?
 		CAUSE_LOAD_PAGE_FAULT : CAUSE_STORE_PAGE_FAULT;
 	assign system_event_mem = ex_mem_q.inst_valid &&
-		(ex_mem_q.exception_valid || mem_page_fault_mem || ex_mem_q.is_ecall || ex_mem_q.is_mret);
+		(ex_mem_q.exception_valid || mem_page_fault_mem ||
+		 ex_mem_q.is_ecall || ex_mem_q.is_mret || ex_mem_q.is_sret);
 
 	always_comb begin
 		case (ex_mem_q.amo_op)
@@ -605,6 +612,7 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 			mem_wb_q.is_csr          <= ex_mem_q.is_csr;
 			mem_wb_q.is_ecall        <= ex_mem_q.is_ecall;
 			mem_wb_q.is_mret         <= ex_mem_q.is_mret;
+			mem_wb_q.is_sret         <= ex_mem_q.is_sret;
 			mem_wb_q.csr_write_enable <= ex_mem_q.csr_write_enable;
 			mem_wb_q.csr_op          <= ex_mem_q.csr_op;
 			mem_wb_q.csr_addr        <= ex_mem_q.csr_addr;
@@ -631,6 +639,7 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 		.exception_tval_wb   (mem_wb_q.exception_tval),
 		.is_ecall_wb         (mem_wb_q.is_ecall),
 		.is_mret_wb          (mem_wb_q.is_mret),
+		.is_sret_wb          (mem_wb_q.is_sret),
 		.csr_write_enable_wb (mem_wb_q.csr_write_enable),
 		.csr_op_wb           (mem_wb_q.csr_op),
 		.csr_addr_wb         (mem_wb_q.csr_addr),
@@ -645,6 +654,11 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 		.csr_mepc            (csr_mepc),
 		.csr_mtvec           (csr_mtvec),
 		.csr_mret_priv       (csr_mret_priv),
+		.csr_sepc            (csr_sepc),
+		.csr_stvec           (csr_stvec),
+		.csr_sret_priv       (csr_sret_priv),
+		.csr_mideleg         (csr_mideleg),
+		.csr_medeleg         (csr_medeleg),
 		.swint               (swint),
 		.trint               (trint),
 		.exint               (exint),
@@ -662,7 +676,9 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 		.system_redirect_fire_wb (system_redirect_fire_wb),
 		.system_redirect_target_wb (system_redirect_target_wb),
 		.csr_trap_wen_wb     (csr_trap_wen_wb),
+		.csr_trap_to_s_wb    (csr_trap_to_s_wb),
 		.csr_mret_wen_wb     (csr_mret_wen_wb),
+		.csr_sret_wen_wb     (csr_sret_wen_wb),
 		.csr_trap_mepc_wb    (csr_trap_mepc_wb),
 		.csr_trap_mcause_wb  (csr_trap_mcause_wb),
 		.csr_trap_mtval_wb   (csr_trap_mtval_wb),
@@ -691,9 +707,11 @@ module core import common::*; import trap_pkg::*; import mem_helpers_pkg::*;(
 		if (reset) begin
 			priv_mode_q <= PRIV_M;
 		end else if (csr_trap_wen_wb) begin
-			priv_mode_q <= PRIV_M;
+			priv_mode_q <= csr_trap_to_s_wb ? PRIV_S : PRIV_M;
 		end else if (csr_mret_wen_wb) begin
 			priv_mode_q <= csr_mret_priv;
+		end else if (csr_sret_wen_wb) begin
+			priv_mode_q <= csr_sret_priv;
 		end
 	end
 

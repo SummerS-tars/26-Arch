@@ -15,6 +15,7 @@ module core_trap_ctrl import common::*; import trap_pkg::*; (
 	input  logic [63:0] exception_tval_wb,
 	input  logic        is_ecall_wb,
 	input  logic        is_mret_wb,
+	input  logic        is_sret_wb,
 	input  logic        csr_write_enable_wb,
 	input  csr_op_t     csr_op_wb,
 	input  csr_addr_t   csr_addr_wb,
@@ -29,6 +30,11 @@ module core_trap_ctrl import common::*; import trap_pkg::*; (
 	input  logic [63:0] csr_mepc,
 	input  logic [63:0] csr_mtvec,
 	input  priv_mode_t  csr_mret_priv,
+	input  logic [63:0] csr_sepc,
+	input  logic [63:0] csr_stvec,
+	input  priv_mode_t  csr_sret_priv,
+	input  logic [63:0] csr_mideleg,
+	input  logic [63:0] csr_medeleg,
 	input  logic        swint,
 	input  logic        trint,
 	input  logic        exint,
@@ -46,7 +52,9 @@ module core_trap_ctrl import common::*; import trap_pkg::*; (
 	output logic        system_redirect_fire_wb,
 	output logic [63:0] system_redirect_target_wb,
 	output logic        csr_trap_wen_wb,
+	output logic        csr_trap_to_s_wb,
 	output logic        csr_mret_wen_wb,
+	output logic        csr_sret_wen_wb,
 	output logic [63:0] csr_trap_mepc_wb,
 	output logic [63:0] csr_trap_mcause_wb,
 	output logic [63:0] csr_trap_mtval_wb,
@@ -58,8 +66,10 @@ module core_trap_ctrl import common::*; import trap_pkg::*; (
 	logic [63:0] hw_mip, interrupt_pending_mask_wb, interrupt_cause_wb;
 	logic        interrupt_enabled_wb, interrupt_pending_wb, mstatus_mie_effective_wb;
 	logic        interrupt_request_wb, system_redirect_ready_wb;
-	logic        exception_commit_wb, ecall_commit_wb, mret_commit_wb;
-	logic        interrupt_commit_wb, trap_commit_wb, system_pending_wb;
+	logic        exception_commit_wb, ecall_commit_wb, mret_commit_wb, sret_commit_wb;
+	logic        interrupt_commit_wb, trap_commit_wb, system_pending_wb, trap_to_s_wb;
+	logic [63:0] exception_or_ecall_cause_wb, trap_cause_wb;
+	logic [5:0]  trap_cause_index_wb;
 
 	assign is_trap_wb = inst_valid_wb && (instr_wb == TRAP_INST);
 	assign commit_valid_wb = inst_valid_wb && !wb_fired;
@@ -71,7 +81,8 @@ module core_trap_ctrl import common::*; import trap_pkg::*; (
 	assign interrupt_pending_wb = interrupt_pending_mask_wb != 64'b0;
 	assign mstatus_mie_effective_wb = mstatus_mie_after_wb(
 		csr_mstatus_pre_trap,
-		commit_valid_wb && csr_write_enable_wb && !exception_valid_wb && !is_ecall_wb && !is_mret_wb,
+		commit_valid_wb && csr_write_enable_wb && !exception_valid_wb &&
+			!is_ecall_wb && !is_mret_wb && !is_sret_wb,
 		csr_op_wb,
 		csr_addr_wb,
 		csr_write_data_wb
@@ -86,32 +97,43 @@ module core_trap_ctrl import common::*; import trap_pkg::*; (
 			interrupt_cause_wb = CAUSE_IRQ_SW;
 	end
 	assign interrupt_request_wb = commit_valid_wb && !exception_valid_wb &&
-		!is_ecall_wb && !is_mret_wb && interrupt_enabled_wb && interrupt_pending_wb;
+		!is_ecall_wb && !is_mret_wb && !is_sret_wb && interrupt_enabled_wb && interrupt_pending_wb;
 	assign system_pending_wb = commit_valid_wb &&
-		(exception_valid_wb || is_ecall_wb || is_mret_wb || interrupt_request_wb);
+		(exception_valid_wb || is_ecall_wb || is_mret_wb || is_sret_wb || interrupt_request_wb);
 	assign system_redirect_ready_wb = !fetch_wait_q && !mem_wait_q;
 	assign system_wb_waiting = system_pending_wb && !system_redirect_ready_wb;
 	assign commit_fire_wb = commit_valid_wb && !system_wb_waiting;
 	assign exception_commit_wb = exception_valid_wb && commit_fire_wb;
 	assign ecall_commit_wb = is_ecall_wb && commit_fire_wb;
 	assign mret_commit_wb = is_mret_wb && commit_fire_wb;
+	assign sret_commit_wb = is_sret_wb && commit_fire_wb;
 	assign interrupt_commit_wb = interrupt_request_wb && commit_fire_wb;
 	assign trap_commit_wb = exception_commit_wb || ecall_commit_wb || interrupt_commit_wb;
+	assign exception_or_ecall_cause_wb = exception_commit_wb ? exception_cause_wb :
+		ecall_cause(priv_mode_q);
+	assign trap_cause_wb = interrupt_commit_wb ? interrupt_cause_wb : exception_or_ecall_cause_wb;
+	assign trap_cause_index_wb = trap_cause_wb[5:0];
+	assign trap_to_s_wb = trap_commit_wb && (priv_mode_q != PRIV_M) &&
+		(trap_cause_wb[63] ? csr_mideleg[trap_cause_index_wb] :
+		 csr_medeleg[trap_cause_index_wb]);
 	assign system_flush_front = system_event_ex || system_event_mem || system_pending_wb;
 	assign reg_write_wb_fire = reg_write_wb && commit_fire_wb && !exception_commit_wb &&
-		!ecall_commit_wb && !mret_commit_wb && (rd_wb != 5'b0);
+		!ecall_commit_wb && !mret_commit_wb && !sret_commit_wb && (rd_wb != 5'b0);
 	assign csr_write_wb_fire = csr_write_enable_wb && commit_fire_wb &&
-		!exception_commit_wb && !ecall_commit_wb && !mret_commit_wb;
-	assign system_redirect_fire_wb = trap_commit_wb || mret_commit_wb;
-	assign system_redirect_target_wb = mret_commit_wb ? csr_mepc : csr_mtvec;
+		!exception_commit_wb && !ecall_commit_wb && !mret_commit_wb && !sret_commit_wb;
+	assign system_redirect_fire_wb = trap_commit_wb || mret_commit_wb || sret_commit_wb;
+	assign system_redirect_target_wb = mret_commit_wb ? csr_mepc :
+		(sret_commit_wb ? csr_sepc : (trap_to_s_wb ? csr_stvec : csr_mtvec));
 	assign csr_trap_wen_wb = trap_commit_wb;
+	assign csr_trap_to_s_wb = trap_to_s_wb;
 	assign csr_mret_wen_wb = mret_commit_wb;
+	assign csr_sret_wen_wb = sret_commit_wb;
 	assign csr_trap_mepc_wb = interrupt_commit_wb ? (pc_wb + 64'd4) : pc_wb;
-	assign csr_trap_mcause_wb = interrupt_commit_wb ? interrupt_cause_wb :
-		(exception_commit_wb ? exception_cause_wb : ecall_cause(priv_mode_q));
+	assign csr_trap_mcause_wb = trap_cause_wb;
 	assign csr_trap_mtval_wb = exception_commit_wb ? exception_tval_wb : 64'b0;
-	assign priv_mode_view = trap_commit_wb ? PRIV_M :
-		(mret_commit_wb ? csr_mret_priv : priv_mode_q);
+	assign priv_mode_view = trap_commit_wb ? (trap_to_s_wb ? PRIV_S : PRIV_M) :
+		(mret_commit_wb ? csr_mret_priv :
+		 (sret_commit_wb ? csr_sret_priv : priv_mode_q));
 	assign trap_valid_wb = is_trap_wb && commit_fire_wb;
 	assign trap_code_wb = trap_code_in;
 endmodule
