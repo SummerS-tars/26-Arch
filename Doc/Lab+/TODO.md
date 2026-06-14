@@ -537,7 +537,8 @@
   - difftest 侧有 sdcard 相关代码，但 RAMHelper 当前没有接成 xv6 可用的块设备 MMIO。
   - 仿真器现已支持 `--fs-image`，可把第二镜像加载到 `0x8700_0000`，作为后续 RAM disk 路线的基础。
   - 已引入可修改 upstream `xv6-riscv` 源码到 `third_party/xv6-riscv/`，并增加顶层 `labplus-xv6-build` 构建入口。
-  - 当前环境缺少 RISC-V GCC/binutils，暂不能生成 `xv6-kernel.bin` / `xv6-fs.img`。
+  - 已安装 RISC-V GCC/binutils，并成功生成 `ready-to-run/lab+/11/xv6-kernel.bin` / `xv6-fs.img`。
+  - 已开始 xv6 侧 RAM disk/platform 适配，但当前尚无可见 console 输出，仍未进入可交互 shell。
 - 要做：
   - 已决定本轮采用“仓库现有内容 + RAM disk 优先”的方向，不引入外部完整 xv6。
   - 已定位完整 xv6 的主要阻塞点是缺少完整软件输入和块设备/RAM disk 入口。
@@ -549,8 +550,11 @@
     - 工具链可用时构建 `third_party/xv6-riscv/kernel/kernel` 和 `fs.img`。
     - 导出 `ready-to-run/lab+/11/xv6-kernel.bin`。
     - 复制 `ready-to-run/lab+/11/xv6-fs.img`。
+  - 已安装 `riscv64-unknown-elf-gcc` / `objcopy` 并验证构建入口可用。
+  - 已将 xv6 侧 disk 路径从 virtio 替换为 RAM disk 内存拷贝。
+  - 已裁剪 QEMU PLIC/SSTC timer 路径，并预留 `0x8700_0000` RAM disk 区域。
   - 已新增 S-mode timer delegation 诊断资产，但当前 no-diff 运行未形成 clean good/bad trap，说明 S-level timer interrupt 仍需后续专门处理。
-  - 后续若继续推进，需要先补齐 RISC-V 工具链，再实现 xv6 侧 RAM disk 驱动。
+  - 后续若继续推进，需要定位 xv6 console 输出不可见问题，以及 stock `mret -> S-mode main` 早期启动失败问题。
 - 验证：
   - 已重跑 Lab5 裁剪 xv6：输出 `xv6 kernel is booting` 和 `Return from init! Test passed`。
   - 已重跑 Lab5 extra、Lab6、Lab+3 护栏。
@@ -560,9 +564,10 @@
     - `./build/emu --no-diff -i ./ready-to-run/lab+/11/ramdisk_magic_test.bin --fs-image ./ready-to-run/lab+/11/ramdisk_magic.img -C 20000 -I 1000`
     - 输出 `Loaded 4 bytes ... to 0x87000000` 和 `HIT GOOD TRAP at pc = 0x80000028`。
   - 已运行 Lab1 基础回归：输出 `HIT GOOD TRAP at pc = 0x80010004`。
-  - 已尝试 `make labplus-xv6-build`，当前失败于：
-    - `riscv64-unknown-elf-gcc: 没有那个文件或目录`
-    - `qemu-system-riscv64: not found`
+  - 已重跑 `make labplus-xv6-build`，成功导出 `xv6-kernel.bin` 和 `xv6-fs.img`。
+  - 已运行适配后的 xv6 RAM disk 镜像：
+    - `./build/emu --no-diff -i ./ready-to-run/lab+/11/xv6-kernel.bin --fs-image ./ready-to-run/lab+/11/xv6-fs.img -C 500000 -I 100000 --force-dump-result`
+    - 输出 `Loaded 2048000 bytes ... to 0x87000000`，随后在 cycle/instr cap 停止；暂未看到 xv6 console 输出。
   - 已尝试 `ready-to-run/lab+/11/smode_timer_diag.bin`，当前在 cycle cap 下停于早期 PC，暂作为诊断记录。
 - 产出：
   - “尝试了什么、卡在哪里、如何分析”的 Lab+ 报告材料：`Doc/Lab+/labplus_xv6_main_track_report.md`。

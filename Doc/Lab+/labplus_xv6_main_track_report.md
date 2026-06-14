@@ -307,14 +307,14 @@ Core 0: HIT GOOD TRAP at pc = 0x80000028
 make labplus-xv6-build
 ```
 
-当前结果：
+此前结果：
 
 ```text
 riscv64-unknown-elf-gcc: 没有那个文件或目录
 qemu-system-riscv64: not found
 ```
 
-解释：当前机器 `PATH` 中没有 RISC-V GCC/binutils，也没有 QEMU RISC-V。源码和构建入口已经准备好，但还不能产出 `kernel.bin` / `fs.img`。安装工具链后可重跑：
+解释：当时机器 `PATH` 中没有 RISC-V GCC/binutils，也没有 QEMU RISC-V。源码和构建入口已经准备好，但还不能产出 `kernel.bin` / `fs.img`。安装工具链后可重跑：
 
 ```bash
 make labplus-xv6-build XV6_TOOLPREFIX=riscv64-unknown-elf-
@@ -325,6 +325,61 @@ make labplus-xv6-build XV6_TOOLPREFIX=riscv64-unknown-elf-
 ```bash
 make labplus-xv6-build XV6_TOOLPREFIX=riscv64-linux-gnu-
 ```
+
+后续已安装最小 RISC-V 工具链：
+
+```text
+riscv64-unknown-elf-gcc 13.2.0
+GNU objcopy 2.42
+```
+
+并成功运行：
+
+```bash
+make labplus-xv6-build
+```
+
+产出：
+
+- `ready-to-run/lab+/11/xv6-kernel.bin`
+- `ready-to-run/lab+/11/xv6-fs.img`
+
+### xv6 侧 RAM disk/platform 适配
+
+为验证 `--fs-image` 路线，本轮在 `third_party/xv6-riscv/kernel/` 做了最小软件侧适配：
+
+- `memlayout.h`：
+  - 将 UART 改为当前平台 `0x4060_0000` 基址。
+  - 增加 `RAMDISK = 0x8700_0000`。
+  - 将 `PHYSTOP` 降到 `RAMDISK`，避免页分配器覆盖 host 加载的 `xv6-fs.img`。
+- `virtio_disk.c`：
+  - 保留 `virtio_disk_init/rw/intr` 接口名，替换实现为 RAM disk 内存拷贝。
+  - `bread/bwrite` 仍通过原 buffer cache 路径访问块设备。
+- `uart.c`：
+  - 改为当前平台的简单 UART TX/ready 访问。
+  - 暂不支持输入中断。
+- `plic.c` / `vm.c`：
+  - PLIC 改为 no-op。
+  - kernel page table 不再映射 QEMU virtio/PLIC MMIO。
+- `start.c`：
+  - 暂时裁剪 QEMU/SSTC timer。
+  - 当前为 bring-up 暂时绕过 stock `mret -> S-mode main`，直接进入 `main()`；完整 S-mode 启动仍需后续单独修。
+
+验证：
+
+```bash
+make labplus-xv6-build
+./build/emu --no-diff -i ./ready-to-run/lab+/11/xv6-kernel.bin --fs-image ./ready-to-run/lab+/11/xv6-fs.img -C 500000 -I 100000 --force-dump-result
+```
+
+当前结果：
+
+```text
+Loaded 2048000 bytes from ./ready-to-run/lab+/11/xv6-fs.img to 0x87000000
+EXCEEDING CYCLE/INSTR LIMIT at pc = 0x61a4c
+```
+
+解释：已能构建并长时间运行适配后的 xv6 镜像，RAM disk 镜像加载成功；但当前还没有可见 xv6 console 输出，也没有进入可交互 shell。下一步应优先定位 console/MMIO 输出不可见问题，以及 stock `mret` 到 S-mode 的早期启动失败问题。
 
 ## S-mode timer 诊断尝试
 

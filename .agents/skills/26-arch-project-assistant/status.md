@@ -8,7 +8,7 @@ Update it whenever the current implementation stage or verified support boundary
 ## Last checked
 
 - Date: 2026-06-14
-- Method: Refactor_TODO steps 1–7 + Lab+ tasks 0–12 + Lab+11 RAM-disk loader micro-test + xv6 source import attempt + Lab4/Lab5/Lab6 recorded regression + Lab+ baseline runs
+- Method: Refactor_TODO steps 1–7 + Lab+ tasks 0–12 + Lab+11 RAM-disk loader micro-test + xv6 source/build/RAM-disk adaptation attempt + Lab4/Lab5/Lab6 recorded regression + Lab+ baseline runs
 
 ## Current project understanding
 
@@ -32,7 +32,7 @@ Update it whenever the current implementation stage or verified support boundary
 - Lab+4 PMP support covers `pmpaddr0/pmpcfg0` entry0 NAPOT R/W/X checks for U/S-mode fetch/load/store/AMO
 - MMU page fault core path is implemented for Sv39 invalid PTE, R/W/X/A/D checks, basic U-mode checks, and fault feedback to core
 - S-mode trap/delegation/`sret` core path is implemented: delegated traps write `sepc/scause/stval`, redirect to `stvec`, and `sret` restores `SPP/SPIE/SIE`
-- Full xv6 main Track has been scoped: current repo has the Lab5 trimmed kernel plus imported modifiable upstream `xv6-riscv` source under `third_party/xv6-riscv`; emu has a fixed-address `--fs-image` RAM-disk loading path, but local RISC-V GCC/binutils are missing and xv6-side RAM-disk driver is still missing
+- Full xv6 main Track has been scoped: current repo has the Lab5 trimmed kernel plus imported modifiable upstream `xv6-riscv` source under `third_party/xv6-riscv`; emu has a fixed-address `--fs-image` RAM-disk loading path; RISC-V GCC/binutils are installed; xv6-side RAM-disk driver/platform bring-up is in progress
 - Lab+12 minimal I-cache is implemented after the MMU: fetch-only, physical-address, RAM-region cache; load/store/AMO/page-table walk/MMIO bypass
 - Lab+13 board extension is explicitly unsupported for this iteration
 - Full xv6 import path recommendation: keep flat `kernel.bin` loading and use the verified `--fs-image` RAM-disk path before attempting virtio-mmio
@@ -51,7 +51,8 @@ Update it whenever the current implementation stage or verified support boundary
 | `make test-lab6` | pass — `Privileged test finished.` / `Exit with code = 0` |
 | Lab+11 xv6 attempt | scoped — existing Lab5 trimmed kernel reaches `xv6 kernel is booting` / `Return from init! Test passed`; full shell is blocked by missing full xv6 image/source and block device/RAM-disk support |
 | Lab+11 RAM-disk loader micro-test | pass — `--fs-image ./ready-to-run/lab+/11/ramdisk_magic.img` loads 4 bytes to `0x87000000`; `ramdisk_magic_test.bin` reads `0x12345678` and hits good trap at `0x80000028` |
-| Lab+11 xv6 source build | blocked — `make labplus-xv6-build` reaches upstream xv6 build but fails because `riscv64-unknown-elf-gcc` and `qemu-system-riscv64` are not in PATH |
+| Lab+11 xv6 source build | pass — `make labplus-xv6-build` produces `ready-to-run/lab+/11/xv6-kernel.bin` and `xv6-fs.img`; QEMU is still absent but not needed for emu |
+| Lab+11 xv6 RAM-disk run | partial — `--fs-image` loads 2,048,000-byte `xv6-fs.img` to `0x87000000`; adapted xv6 runs until cycle/instr cap but currently has no visible console output |
 | Lab+2 direct run | partial — no mismatch; default delay passes qsort/queen before 600s timeout, `DELAY=0` passes qsort/queen/bf before 600s timeout |
 | Lab+2 perf sample | pass — after I-cache 50M-cycle sample IPC ~0.307, `fetch_waits` ~18.5M/50M; previous status snapshot was IPC ~0.190, `fetch_waits` ~31.2M/50M |
 | Lab+3 direct run | pass — `HIT GOOD TRAP at pc = 0x800000dc`, `cycleCnt = 221` after I-cache |
@@ -73,8 +74,8 @@ Steps 1–7 from `Doc/Refactor_TODO.md` are done on branch `refactor/before_labp
 
 ## Likely next direction
 
-1. Next small xv6 step: install/provide RISC-V GCC/binutils, then rerun `make labplus-xv6-build` to produce `xv6-kernel.bin` and `xv6-fs.img`.
-2. After stock xv6 artifacts build, replace xv6's virtio disk path with a RAM-disk driver that reads the verified `--fs-image` region.
+1. Next small xv6 step: debug why adapted xv6 console output is not visible despite Lab5 UART still working.
+2. Then fix the stock `mret -> S-mode main` path; current bring-up temporarily runs `main()` directly in M-mode to isolate RAM-disk/platform work.
 3. Refine S-level timer interrupt delegation after the current diagnostic can be made to end cleanly.
 4. Further performance work can extend the I-cache with larger lines or sequential prefetch; keep D-cache deferred unless the scope accepts store/MMIO/AMO consistency risk.
 

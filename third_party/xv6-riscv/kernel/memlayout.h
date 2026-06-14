@@ -17,8 +17,9 @@
 // end -- start of kernel page allocation area
 // PHYSTOP -- end RAM used by the kernel
 
-// qemu puts UART registers here in physical memory.
-#define UART0     0x10000000L
+// 26-Arch difftest uses a minimal UART-like output device.
+// Writing one byte to UART0+4 prints a character; UART0+8 is a dummy ready reg.
+#define UART0     0x40600000L
 #define UART0_IRQ 10
 
 // virtio mmio interface
@@ -33,11 +34,12 @@
 #define PLIC_SPRIORITY(hart) (PLIC + 0x201000 + (hart) * 0x2000)
 #define PLIC_SCLAIM(hart)    (PLIC + 0x201004 + (hart) * 0x2000)
 
-// the kernel expects there to be RAM
-// for use by the kernel and user pages
-// from physical address 0x80000000 to PHYSTOP.
+// The host loads xv6-fs.img at RAMDISK. Keep PHYSTOP below it so kalloc()
+// never reuses the file-system image as free pages.
 #define KERNBASE 0x80000000L
-#define PHYSTOP  (KERNBASE + 128 * 1024 * 1024)
+#define RAMDISK  0x87000000L
+#define PHYSTOP  RAMDISK
+#define RAMDISK_SIZE (16 * 1024 * 1024)
 
 // map the trampoline page to the highest address,
 // in both user and kernel space.

@@ -29,12 +29,6 @@ kvmmake(void)
   // uart registers
   kvmmap(kpgtbl, UART0, UART0, PGSIZE, PTE_R | PTE_W);
 
-  // virtio mmio disk interface
-  kvmmap(kpgtbl, VIRTIO0, VIRTIO0, PGSIZE, PTE_R | PTE_W);
-
-  // PLIC
-  kvmmap(kpgtbl, PLIC, PLIC, 0x4000000, PTE_R | PTE_W);
-
   // map kernel text executable and read-only.
   kvmmap(kpgtbl, KERNBASE, KERNBASE, (uint64)etext - KERNBASE, PTE_R | PTE_X);
 
