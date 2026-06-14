@@ -236,6 +236,30 @@
   - 当前仓库可以稳定运行裁剪 xv6，但没有足够软件和块设备条件直接进入完整 xv6 shell。
   - 后续若继续推进，建议先提供/引入可修改 xv6 源码，再做 RAM disk 驱动与镜像加载；暂不优先实现完整 virtio-mmio。
 
+### 2026-06-14：完成任务 12
+
+- 分文档：`Doc/Lab+/labplus_cache_perf_report.md`。
+- 已实现最小 I-cache 性能优化：
+  - 新增 `vsrc/util/ICache.sv`。
+  - 在 `SimTop.sv` / `VTop.sv` 中接入 `MMU -> ICache -> RAMHelper/外部 CBus`。
+  - I-cache 位于 MMU 之后，使用物理地址。
+  - 仅缓存 `MEM_ACCESS_FETCH` 且 `addr[31] = 1` 的 RAM 取指请求。
+  - load/store、AMO、页表 walk 和 MMIO 全部 bypass。
+  - `satp` 或特权级变化时保守 flush。
+- 已验证：
+  - `ReadLints`：无新增诊断。
+  - `make sim`：构建通过。
+  - Lab4：`HIT GOOD TRAP at pc = 0x8001fff8`。
+  - Lab5：输出 `Return from init! Test passed`。
+  - Lab5 extra：`HIT GOOD TRAP at pc = 0x800002b4`。
+  - Lab6：输出 `Privileged test finished.` / `Exit with code = 0`。
+  - Lab+3：`HIT GOOD TRAP at pc = 0x800000dc`。
+  - Lab+4：前置 privileged/PMP 子测仍输出 `Single test passed.`，80M-cycle cap 下可继续跑到 stream。
+  - Lab+2 50M-cycle 性能样本：IPC 约 `0.307`，`fetch_waits` 约 `18.5M/50M`；此前状态快照样本 IPC 约 `0.190`，`fetch_waits` 约 `31.2M/50M`。
+- 边界：
+  - 当前 line 为 64-bit word，不是 64B cache line。
+  - 暂未实现 prefetch、D-cache 和完整 `fence.i` 语义。
+
 ## TODO 顺序
 
 ### 0. 确认 Lab+ 测试输入并建立失败基线（已完成）
@@ -523,27 +547,29 @@
 - 产出：
   - “尝试了什么、卡在哪里、如何分析”的 Lab+ 报告材料：`Doc/Lab+/labplus_xv6_main_track_report.md`。
 
-### 12. Cache 或更复杂性能优化
+### 12. Cache 或更复杂性能优化（已完成最小 I-cache）
 
 - 成本：很高
 - 优先级：低
 - 依赖：任务 3、任务 4
 - 目标：作为性能优化的高级项。
 - 当前状态：
-  - 当前总线路径是 IBus/DBus 到 CBus，再到 MMU/RAM。
-  - 未见 I-cache/D-cache 模块。
+  - 当前总线路径已变为 IBus/DBus 到 CBus，再到 MMU，最后经过 I-cache 到 RAM。
+  - 已实现 MMU 后物理只读 I-cache。
+  - 未实现 D-cache。
 - 要做：
-  - 优先考虑 I-cache，因为实现面小于 D-cache。
-  - 明确 cache 与 MMU 的前后位置。
-  - 处理 flush、fence、异常、中断与总线握手。
-  - D-cache 需要处理 store、MMIO bypass、一致性等问题，风险明显更高。
+  - 已优先实现 I-cache，因为实现面小于 D-cache。
+  - 已明确 cache 位于 MMU 之后，使用物理地址。
+  - 已处理 `satp` / 特权级变化时的保守 flush。
+  - 已保持异常、中断与总线握手路径不变；非 fetch 请求全部 bypass。
+  - D-cache 需要处理 store、MMIO bypass、一致性等问题，风险明显更高，本轮不做。
 - 验证：
-  - `make test-labplus-2`
-  - Lab4/Lab5/Lab6 全回归。
+  - 已运行 Lab+2 50M-cycle 性能样本。
+  - 已运行 Lab4/Lab5/Lab5-extra/Lab6/Lab+3/Lab+4 回归关键路径。
 - 产出：
-  - 性能对比报告。
+  - 性能对比报告：`Doc/Lab+/labplus_cache_perf_report.md`。
 
-### 13. Lab+ 上板扩展
+### 13. Lab+ 上板扩展（不支持）
 
 - 成本：很高
 - 优先级：最低
@@ -552,16 +578,13 @@
 - 当前状态：
   - 仿真路径和板端路径需要分开看。
   - Lab5 报告中已有上板时序与 BRAM 初始化差异的经验。
+  - 本轮 Lab+ 迭代明确不支持继续做上板扩展，避免把验证范围扩大到 Vivado/板端外设差异。
 - 要做：
-  - 先确保仿真通过。
-  - 同步 `.bin` / `.coe` / BRAM 初始化。
-  - 检查 MMIO 地址是否适合板端。
-  - 用串口输出确认进度。
+  - 不再推进。
 - 验证：
-  - Vivado 综合实现。
-  - 板端串口日志。
+  - 不适用。
 - 产出：
-  - 上板 Bonus 报告材料。
+  - 记录为不支持项。
 
 ## 推荐迭代批次
 
@@ -594,13 +617,13 @@
 
 ### 第四批：时间充裕再做
 
-- 任务 12：cache 或复杂性能优化。
-- 任务 13：Lab+ 上板扩展。
+- 任务 12：cache 或复杂性能优化。（已完成最小 I-cache）
+- 任务 13：Lab+ 上板扩展。（不支持）
 
 目标：只在主线功能稳定后尝试，避免破坏已有 Lab1-Lab6 回归。
 
 ## 当前最推荐的下一步
 
-任务 0-11 已完成到当前可验证边界。下一步若继续追完整 xv6，需要先提供/引入可修改 xv6 源码和文件系统镜像，再实现 RAM disk 驱动与镜像加载；若不继续软件侧，则可以进入任务 12：cache 或更复杂性能优化。
+任务 0-12 已完成到当前可验证边界，任务 13 明确不支持。若继续优化，可在任务 12 基础上尝试更大 cache line 或顺序 prefetch；D-cache 仍建议后置。
 
-理由：当前仓库只有裁剪 xv6，且 RAMHelper 未提供块设备/RAM disk 入口；没有完整软件输入时，继续改 RTL 很难形成 shell 级验收。
+理由：最小 I-cache 已验证能降低 `fetch_waits` 并提升 Lab+2 性能样本 IPC；继续做 D-cache 会牵涉 store/MMIO/AMO/一致性，成本和回归风险明显更高。

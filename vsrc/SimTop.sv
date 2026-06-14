@@ -15,6 +15,7 @@
 `include "util/DBusToCBus.sv"
 `include "util/CBusArbiter.sv"
 `include "util/MMU.sv"
+`include "util/ICache.sv"
 
 module SimTop import common::*;(
   input         clock,
@@ -30,8 +31,8 @@ module SimTop import common::*;(
   input  [7:0]  io_uart_in_ch
 );
 
-    cbus_req_t  oreq;
-    cbus_resp_t oresp;
+    cbus_req_t  oreq, icache_ireq;
+    cbus_resp_t oresp, icache_iresp;
     logic trint, swint, exint;
 
     ibus_req_t  ireq;
@@ -44,6 +45,9 @@ module SimTop import common::*;(
     cbus_resp_t mmu_iresp;
     priv_mode_t core_priv_mode;
     u64         core_satp;
+    priv_mode_t core_priv_mode_q;
+    u64         core_satp_q;
+    logic       icache_flush;
 
     core core(
       .clk(clock), .reset, .ireq, .iresp, .dreq, .dresp, .trint, .swint, .exint,
@@ -65,10 +69,33 @@ module SimTop import common::*;(
         .reset(reset),
         .ireq(mmu_ireq),
         .iresp(mmu_iresp),
-        .oreq(oreq),
-        .oresp(oresp),
+        .oreq(icache_ireq),
+        .oresp(icache_iresp),
         .priv_mode(core_priv_mode),
         .satp(core_satp)
+    );
+
+    always_ff @(posedge clock) begin
+        if (reset) begin
+            core_priv_mode_q <= PRIV_M;
+            core_satp_q <= 64'b0;
+        end else begin
+            core_priv_mode_q <= core_priv_mode;
+            core_satp_q <= core_satp;
+        end
+    end
+
+    assign icache_flush = !reset &&
+        ((core_priv_mode_q != core_priv_mode) || (core_satp_q != core_satp));
+
+    ICache icache(
+        .clk(clock),
+        .reset(reset),
+        .flush(icache_flush),
+        .ireq(icache_ireq),
+        .iresp(icache_iresp),
+        .oreq(oreq),
+        .oresp(oresp)
     );
 
     RAMHelper2 ram(

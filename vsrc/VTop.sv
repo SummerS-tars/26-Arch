@@ -12,6 +12,7 @@
 `include "util/DBusToCBus.sv"
 `include "util/CBusArbiter.sv"
 `include "util/MMU.sv"
+`include "util/ICache.sv"
 
 `endif
 module VTop 
@@ -31,8 +32,13 @@ module VTop
     cbus_resp_t icresp, dcresp;
     cbus_req_t  mmu_ireq;
     cbus_resp_t mmu_iresp;
+    cbus_req_t  icache_ireq;
+    cbus_resp_t icache_iresp;
     priv_mode_t priv_mode_o;
+    priv_mode_t priv_mode_q;
     u64         satp_o;
+    u64         satp_q;
+    logic       icache_flush;
 
     core core(.*);
     IBusToCBus icvt(.*);
@@ -53,10 +59,33 @@ module VTop
         .reset(reset),
         .ireq(mmu_ireq),
         .iresp(mmu_iresp),
-        .oreq(oreq),
-        .oresp(oresp),
+        .oreq(icache_ireq),
+        .oresp(icache_iresp),
         .priv_mode(priv_mode_o),
         .satp(satp_o)
+    );
+
+    always_ff @(posedge clk) begin
+        if (reset) begin
+            priv_mode_q <= PRIV_M;
+            satp_q <= 64'b0;
+        end else begin
+            priv_mode_q <= priv_mode_o;
+            satp_q <= satp_o;
+        end
+    end
+
+    assign icache_flush = !reset &&
+        ((priv_mode_q != priv_mode_o) || (satp_q != satp_o));
+
+    ICache icache(
+        .clk(clk),
+        .reset(reset),
+        .flush(icache_flush),
+        .ireq(icache_ireq),
+        .iresp(icache_iresp),
+        .oreq(oreq),
+        .oresp(oresp)
     );
 
 	always_ff @(posedge clk) begin
