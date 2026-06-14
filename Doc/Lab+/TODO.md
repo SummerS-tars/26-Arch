@@ -17,33 +17,49 @@
 - Lab1-Lab6 主线已形成模块化五级流水线实现。
 - Lab4/Lab5/Lab6 在重构后曾记录为通过。
 - `Makefile` 已有 `test-labplus-2/3/4` 目标。
-- `ready-to-run/lab+/` 当前可见的是 `.s` / `.S` 文本，未见 Makefile 引用的 `.bin` 输入。
+- `ready-to-run/lab+/` 已有 Lab+2/3/4 的 `.bin` 输入和对应反汇编文本。
 - `docs/report.md` 当前仍是 Lab6 报告，不是 Lab+ 报告。
 - 当前代码中未见 M 扩展乘除法、A 扩展原子指令、PMP 权限检查、page fault、分支预测、cache、完整 xv6 磁盘 MMIO 支持。
 
+## 已完成记录
+
+### 2026-06-14：完成任务 0-1
+
+- 已确认 Lab+ 测试输入存在：
+  - `ready-to-run/lab+/2/microbench-riscv64-nutshell.bin`
+  - `ready-to-run/lab+/3/atomicity.bin`
+  - `ready-to-run/lab+/4/all-test-privfull.bin`
+- 已建立 Lab+ 初始失败基线：
+  - Lab+2：运行到 microbench qsort 后 Difftest mismatch，首个关键点为 `pc = 0x80000bc4`，`a5` 期望 `0x343fd`，实际 `0x343fe`；该指令为 `mulw`，指向 M 扩展缺失。
+  - Lab+3：首个原子指令 `amoswap.w` 处 Difftest mismatch，关键点为 `pc = 0x80000028`，`t3` 期望 `0x12345678`，实际 `0x0`；指向 A 扩展缺失。
+  - Lab+4：no-diff 运行未通过，显式 cycle cap 下停在 `EXCEEDING CYCLE/INSTR LIMIT at pc = 0x0`；后续需结合 PMP/access fault 与特权测试路径继续定位。
+- 已整理已有 Bonus 材料：
+  - Lab4：S-mode CSR、`medeleg/mideleg`、`pmpcfg0/pmpaddr0` 基本读写，以及 CSR 作用说明。
+  - Lab5：Sv39 MMU 和上级 leaf PTE 地址拼接，可作为巨页支持说明。
+  - Lab6：异常/中断主线已完成；缺页异常和单独“时钟中断处理程序打印内容”未完成。
+
 ## TODO 顺序
 
-### 0. 补齐 Lab+ 测试输入并建立失败基线
+### 0. 确认 Lab+ 测试输入并建立失败基线（已完成）
 
 - 成本：低
 - 优先级：最高
 - 依赖：无
 - 目标：让后续每个功能都有明确的起点和验证结果。
-- 当前状态：`Makefile` 引用 `ready-to-run/lab+/2/*.bin`、`3/*.bin`、`4/*.bin`，但当前仓库扫描未见对应 `.bin`。
+- 当前状态：`Makefile` 引用的 Lab+2/3/4 `.bin` 均已存在，初始失败基线已记录。
 - 要做：
-  - 确认课程包或上游仓库中是否有 Lab+ `.bin`。
-  - 补齐 `ready-to-run/lab+/2/microbench-riscv64-nutshell.bin`。
-  - 补齐 `ready-to-run/lab+/3/atomicity.bin`。
-  - 补齐 `ready-to-run/lab+/4/all-test-privfull.bin`。
-  - 运行三个 Lab+ 目标，记录第一处失败。
+  - 已确认 `ready-to-run/lab+/2/microbench-riscv64-nutshell.bin`。
+  - 已确认 `ready-to-run/lab+/3/atomicity.bin`。
+  - 已确认 `ready-to-run/lab+/4/all-test-privfull.bin`。
+  - 已运行三个 Lab+ 目标并记录第一处关键失败。
 - 验证：
-  - `make test-labplus-2`
-  - `make test-labplus-3`
-  - `make test-labplus-4`
+  - 等价直连命令：`./build/emu --diff ./ready-to-run/riscv64-nemu-interpreter-so -i ./ready-to-run/lab+/2/microbench-riscv64-nutshell.bin`
+  - 等价直连命令：`./build/emu --diff ./ready-to-run/riscv64-nemu-interpreter-so -i ./ready-to-run/lab+/3/atomicity.bin`
+  - 等价直连命令：`./build/emu --no-diff -i ./ready-to-run/lab+/4/all-test-privfull.bin -C 8000000 --force-dump-result`
 - 产出：
-  - 一段基线记录，写入后续 Lab+ 报告。
+  - 已得到一段基线记录，可写入后续 Lab+ 报告。
 
-### 1. 整理已有 Bonus 材料
+### 1. 整理已有 Bonus 材料（已完成）
 
 - 成本：低
 - 优先级：很高
@@ -56,14 +72,14 @@
   - Lab6 报告明确缺页异常未实现。
   - Lab6 报告没有单独写“时钟中断处理程序打印内容”的 Bonus。
 - 要做：
-  - 在 Lab+ 报告中列出“已完成/已有基础”的 Bonus。
-  - 对巨页支持补一段实现说明，重点对应 `MMU.sv` 的 `leaf_addr()`。
-  - 对 PMP CSR 只写“基本读写”，不要写成“已实现 PMP 权限保护”。
+  - 已列出“已完成/已有基础”的 Bonus。
+  - 已确认巨页支持说明应重点对应 `MMU.sv` 的 `leaf_addr()`。
+  - 已确认 PMP CSR 只能写“基本读写”，不能写成“已实现 PMP 权限保护”。
 - 验证：
   - 代码检查为主。
   - 若能运行 Lab5 回归，保留 `Return from init! Test passed`。
 - 产出：
-  - Lab+ 报告中的“已有工作整理”章节。
+  - 已形成 Lab+ 报告中“已有工作整理”章节的要点。
 
 ### 2. 实现 M 扩展乘除法
 
@@ -347,8 +363,8 @@
 
 ### 第一批：最稳妥
 
-- 任务 0：补齐测试输入和失败基线。
-- 任务 1：整理已有 Bonus 材料。
+- 任务 0：确认测试输入和失败基线。（已完成）
+- 任务 1：整理已有 Bonus 材料。（已完成）
 - 任务 2：实现 M 扩展乘除法。
 - 任务 3：让 microbench 先正确跑起来。
 
@@ -381,6 +397,6 @@
 
 ## 当前最推荐的下一步
 
-先完成任务 0。没有 `.bin` 和失败基线时，后续无法判断一个改动是推进了 Lab+，还是只是改变了失败形式。
+任务 0-1 已完成。下一步优先做任务 2：实现 M 扩展乘除法。
 
-任务 0 完成后，优先做任务 2。M 扩展相对独立，成本低于 PMP、page fault、完整 xv6，并且可能是 microbench 正确运行的前置条件。
+理由：Lab+2 的首个关键失败点已经落在 `mulw`，而 M 扩展相对独立，成本低于 PMP、page fault、完整 xv6，并且很可能是 microbench 正确运行的前置条件。

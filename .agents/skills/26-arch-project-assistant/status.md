@@ -7,8 +7,8 @@ Update it whenever the current implementation stage or verified support boundary
 
 ## Last checked
 
-- Date: 2026-06-08
-- Method: Refactor_TODO steps 1–7 + incremental commits + Lab4/Lab5/Lab6 regression
+- Date: 2026-06-14
+- Method: Refactor_TODO steps 1–7 + Lab4/Lab5/Lab6 recorded regression + Lab+ baseline runs
 
 ## Current project understanding
 
@@ -34,7 +34,9 @@ Update it whenever the current implementation stage or verified support boundary
 | `make test-lab4` | pass — post-refactor verified |
 | `make test-lab5` | pass — `Return from init! Test passed` |
 | `make test-lab6` | pass — `Privileged test finished.` / `Exit with code = 0` |
-| `test-labplus-2/3/4` | not run yet — next lab+ baseline |
+| Lab+2 direct run | fail — Difftest mismatch at `pc = 0x80000bc4`, `mulw` result differs |
+| Lab+3 direct run | fail — Difftest mismatch at `pc = 0x80000028`, first `amoswap.w` unsupported |
+| Lab+4 direct run | fail — no-diff run exceeds cycle limit at `pc = 0x0` with explicit cycle cap |
 
 ## Refactor boundary (completed)
 
@@ -50,9 +52,10 @@ Steps 1–7 from `Doc/Refactor_TODO.md` are done on branch `refactor/before_labp
 
 ## Likely next direction
 
-1. Run `test-labplus-2/3/4` to record failure baseline.
-2. Implement lab+ in `core_trap_ctrl.sv` / `core_csr.sv` on separate commits.
-3. Revisit IBus addr latch / CBus `saved_req` hold after lab+ with board regression if needed.
+1. Implement M extension first; Lab+2 baseline currently fails on `mulw`.
+2. Implement A extension minimal set (`amoswap.w`, `amoadd.w`, `lr.w`, `sc.w`) for Lab+3.
+3. Implement PMP/access fault path for Lab+4 after M/A baselines are understood.
+4. Revisit IBus addr latch / CBus `saved_req` hold after lab+ with board regression if needed.
 
 ## Update rule
 
