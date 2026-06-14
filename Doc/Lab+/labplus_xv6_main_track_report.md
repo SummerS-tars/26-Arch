@@ -288,6 +288,44 @@ Core 0: HIT GOOD TRAP at pc = 0x80000028
 
 这个阶段不需要完整 xv6 源码，就能验证仿真加载链路；通过后再接 xv6 ramdisk 驱动。
 
+## xv6 源码引入与构建入口
+
+在 RAM disk 加载链路通过后，本轮继续推进了下一个小步：引入可修改的 upstream `xv6-riscv` 源码，作为后续替换磁盘驱动、适配平台地址和生成 `fs.img` 的软件基础。
+
+当前落地内容：
+
+- 新增普通源码目录：`third_party/xv6-riscv/`。
+- 不使用 submodule，便于后续直接修改 `kernel/virtio_disk.c`、`kernel/memlayout.h`、`kernel/uart.c` 等平台相关文件。
+- 顶层 `Makefile` 新增 `labplus-xv6-build`：
+  - 调用 `third_party/xv6-riscv` 构建 `kernel/kernel` 和 `fs.img`。
+  - 工具链可用时，用 `objcopy -O binary` 导出 `ready-to-run/lab+/11/xv6-kernel.bin`。
+  - 同步复制 `fs.img` 为 `ready-to-run/lab+/11/xv6-fs.img`。
+
+验证命令：
+
+```bash
+make labplus-xv6-build
+```
+
+当前结果：
+
+```text
+riscv64-unknown-elf-gcc: 没有那个文件或目录
+qemu-system-riscv64: not found
+```
+
+解释：当前机器 `PATH` 中没有 RISC-V GCC/binutils，也没有 QEMU RISC-V。源码和构建入口已经准备好，但还不能产出 `kernel.bin` / `fs.img`。安装工具链后可重跑：
+
+```bash
+make labplus-xv6-build XV6_TOOLPREFIX=riscv64-unknown-elf-
+```
+
+若使用其他工具链前缀，可改为例如：
+
+```bash
+make labplus-xv6-build XV6_TOOLPREFIX=riscv64-linux-gnu-
+```
+
 ## S-mode timer 诊断尝试
 
 完整 xv6 还依赖 S-mode timer interrupt。为低成本定位该风险，本轮新增一个诊断生成器：
@@ -318,8 +356,8 @@ EXCEEDING CYCLE/INSTR LIMIT at pc = 0x80000034 / 0x80000014
 
 - 当前仓库能稳定运行 Lab5 裁剪 xv6 到 `Return from init! Test passed`。
 - S-mode trap/delegation/`sret` 和 Lab+3 原子回归仍通过。
-- 仿真侧已具备 RAM disk/第二镜像加载入口，但仍缺少完整 xv6 软件输入和 xv6 侧 RAM disk 驱动。
+- 仿真侧已具备 RAM disk/第二镜像加载入口，并已引入可修改 xv6 源码；当前缺少本机 RISC-V 工具链，尚不能生成 `kernel.bin` / `fs.img`。
 - 在不引入外部完整 xv6 的前提下，无法直接验证进入 shell。
-- RAM disk 加载链路微型自测已通过；后续最推荐接入可修改 xv6 的 ramdisk 驱动。
+- RAM disk 加载链路微型自测已通过；后续最推荐在工具链可用后接入 xv6 侧 ramdisk 驱动。
 
-下一步若继续推进完整 xv6，建议先提供或引入可修改的 xv6 源码，然后优先实现 xv6 侧 RAM disk 驱动；等能读文件系统和进入用户态后，再考虑 PLIC、virtio 或更完整 S-level interrupt 语义。
+下一步若继续推进完整 xv6，建议先安装或提供 RISC-V GCC/binutils，然后构建 `xv6-kernel.bin` / `xv6-fs.img`；随后优先实现 xv6 侧 RAM disk 驱动。等能读文件系统和进入用户态后，再考虑 PLIC、virtio 或更完整 S-level interrupt 语义。

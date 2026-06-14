@@ -53,6 +53,11 @@ REF_NEMU := riscv64-nemu-interpreter-so-apple
 endif
 REF_SO := $(NEMU_HOME)/$(REF_NEMU)
 
+XV6_HOME ?= ./third_party/xv6-riscv
+XV6_OUT ?= ./ready-to-run/lab+/11
+XV6_TOOLPREFIX ?= riscv64-unknown-elf-
+XV6_OBJCOPY ?= $(XV6_TOOLPREFIX)objcopy
+
 sim:
 	rm -rf build
 	mkdir -p build
@@ -94,6 +99,12 @@ test-labplus-3: sim
 test-labplus-4: sim
 	TEST=all ./build/emu --no-diff -i ./ready-to-run/lab+/4/all-test-privfull.bin $(VOPT) || true
 
+labplus-xv6-build:
+	$(MAKE) -C $(XV6_HOME) TOOLPREFIX=$(XV6_TOOLPREFIX) kernel/kernel fs.img
+	mkdir -p $(XV6_OUT)
+	$(XV6_OBJCOPY) -O binary $(XV6_HOME)/kernel/kernel $(XV6_OUT)/xv6-kernel.bin
+	cp $(XV6_HOME)/fs.img $(XV6_OUT)/xv6-fs.img
+
 clean:
 	rm -rf build
 
@@ -101,4 +112,4 @@ include verilate/Makefile.include
 include verilate/Makefile.verilate.mk
 include verilate/Makefile.vsim.mk
 
-.PHONY: emu clean sim
+.PHONY: emu clean sim labplus-xv6-build
